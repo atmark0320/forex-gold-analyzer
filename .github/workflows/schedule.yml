@@ -2,11 +2,15 @@ name: forex-gold-analyzer
 
 on:
   schedule:
-    # JST 0:00 / 6:00 / 12:00 / 18:00 に配信 (cronはUTC基準なので9時間差で変換)
-    - cron: "0 15 * * *"   # JST 0:00
-    - cron: "0 21 * * *"   # JST 6:00
-    - cron: "0 3 * * *"    # JST 12:00
-    - cron: "0 9 * * *"    # JST 18:00
+    # JST 0/4/8/12/16/20時・平日のみ配信
+    # cronはUTC基準のため9時間差で変換し、JST日付とUTC日付がずれる時間帯は
+    # 曜日指定もJSTの月〜金に対応するようずらしてある(0=日,1=月,...,6=土)
+    - cron: "0 15 * * 0-4"   # JST 0:00  (UTC日〜木 → JST月〜金)
+    - cron: "0 19 * * 0-4"   # JST 4:00  (UTC日〜木 → JST月〜金)
+    - cron: "0 23 * * 0-4"   # JST 8:00  (UTC日〜木 → JST月〜金)
+    - cron: "0 3 * * 1-5"    # JST 12:00 (UTC月〜金 → JST月〜金)
+    - cron: "0 7 * * 1-5"    # JST 16:00 (UTC月〜金 → JST月〜金)
+    - cron: "0 11 * * 1-5"   # JST 20:00 (UTC月〜金 → JST月〜金)
   workflow_dispatch: {}   # Actions画面の「Run workflow」ボタンで手動実行するため
 
 permissions:
@@ -37,16 +41,49 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: python forex_gold_analyzer.py
 
+      # 実行タイミングが重なるとリモートのmainが先に進んでいて
+      # 単純なgit pushが失敗することがあるため、pull --rebaseしてから
+      # push、失敗したら少し待って最大5回までリトライする
       - name: 生成したチャート画像をリポジトリにpush
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add charts/
-          git diff --staged --quiet || git commit -m "chore: update charts (${{ github.run_id }})"
-          git push
+          if git diff --staged --quiet; then
+            echo "コミットする変更はありません"
+          else
+            git commit -m "chore: update charts (${{ github.run_id }})"
+            success=false
+            for i in 1 2 3 4 5; do
+              if git pull --rebase origin main && git push; then
+                success=true
+                break
+              fi
+              echo "push失敗。${i}回目のリトライ前に待機します..."
+              sleep $((i * 5))
+            done
+            if [ "$success" = false ]; then
+              echo "::error::5回リトライしてもpushに失敗しました"
+              exit 1
+            fi
+          fi
 
       - name: Telegramへ送信
+        if: always()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python send_to_telegram.py
+
+      - name: 失敗時にTelegramへエラー通知
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="⚠️ forex-gold-analyzerの実行でエラーが発生しました。
+詳細ログ: ${RUN_URL}"
