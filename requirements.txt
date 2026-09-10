@@ -1,0 +1,7 @@
+yfinance
+pandas
+google-genai
+openai
+httpx
+requests
+matplotlib

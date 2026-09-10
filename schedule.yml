@@ -1,0 +1,52 @@
+name: forex-gold-analyzer
+
+on:
+  schedule:
+    # JST 0:00 / 6:00 / 12:00 / 18:00 に配信 (cronはUTC基準なので9時間差で変換)
+    - cron: "0 15 * * *"   # JST 0:00
+    - cron: "0 21 * * *"   # JST 6:00
+    - cron: "0 3 * * *"    # JST 12:00
+    - cron: "0 9 * * *"    # JST 18:00
+  workflow_dispatch: {}   # Actions画面の「Run workflow」ボタンで手動実行するため
+
+permissions:
+  contents: write   # チャート画像をリポジトリにcommit/pushするために必要
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Pythonをセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 日本語フォントをインストール(チャートの文字化け防止)
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: 相場分析を実行(チャート画像とnotify_payloads.jsonを生成)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python forex_gold_analyzer.py
+
+      - name: 生成したチャート画像をリポジトリにpush
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add charts/
+          git diff --staged --quiet || git commit -m "chore: update charts (${{ github.run_id }})"
+          git push
+
+      - name: Telegramへ送信
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python send_to_telegram.py
