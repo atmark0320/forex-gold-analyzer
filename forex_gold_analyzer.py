@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import sys
 import json
 import time
 from datetime import datetime, timezone, timedelta
@@ -572,9 +573,15 @@ if __name__ == "__main__":
     print("\n" + calendar_text)
     all_payloads.append({"type": "text", "text": calendar_text})
 
-    all_payloads += asyncio.run(analyze_market("ドル円 (USD/JPY)", "JPY=X", "usdjpy", live_free_models))
-    all_payloads += asyncio.run(analyze_market("金 (XAU/USD)", "GC=F", "gold", live_free_models))
+    usdjpy_payload = asyncio.run(analyze_market("ドル円 (USD/JPY)", "JPY=X", "usdjpy", live_free_models))
+    gold_payload = asyncio.run(analyze_market("金 (XAU/USD)", "GC=F", "gold", live_free_models))
+    all_payloads += usdjpy_payload
+    all_payloads += gold_payload
 
     with open(NOTIFY_PAYLOAD_FILE, "w", encoding="utf-8") as f:
         json.dump(all_payloads, f, ensure_ascii=False, indent=2)
     print(f"\n✅ Telegram送信用ペイロードを {NOTIFY_PAYLOAD_FILE} に書き出しました({len(all_payloads)}件)")
+
+    if not usdjpy_payload and not gold_payload:
+        print("❌ ドル円・金の両方で分析が完全に失敗しました。ワークフローを失敗扱いにします。")
+        sys.exit(1)
