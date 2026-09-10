@@ -83,7 +83,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          MESSAGE="⚠️ forex-gold-analyzerの実行でエラーが発生しました。詳細ログ: ${RUN_URL}"
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d text="⚠️ forex-gold-analyzerの実行でエラーが発生しました。
-詳細ログ: ${RUN_URL}"
+            -d text="${MESSAGE}"
