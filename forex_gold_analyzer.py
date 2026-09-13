@@ -303,7 +303,8 @@ async def gather_with_progress(labeled_coros, heartbeat_interval=15):
 # ---------------------------------------------------------
 # 3b. JSON解析 & 固定フォーマット組み立て
 # ---------------------------------------------------------
-REQUIRED_SCENARIO_KEYS = ["action", "probability_pct", "entry_price", "target1", "target2", "ko_price", "ko_reason"]
+REQUIRED_SCENARIO_KEYS = ["action", "probability_pct", "entry_type", "entry_trigger",
+                          "entry_price", "target1", "target2", "ko_price", "ko_reason"]
 REQUIRED_TOP_KEYS = ["common_view", "disagreement", "daily_trend", "h4_trend", "h1_trend",
                      "support", "resistance", "main_scenario", "sub_scenario", "risk_note"]
 
@@ -326,6 +327,19 @@ def parse_json_response(raw_text: str):
             continue
     return None
 
+def _format_scenario_block(sc: dict) -> str:
+    is_immediate = sc.get("entry_type") == "immediate"
+    judge_label = "即エントリー" if is_immediate else "条件待ち"
+    trigger = sc.get("entry_trigger", "(記載なし)")
+    price_label = "エントリー価格" if is_immediate else "トリガー価格"
+    return (
+        f"判断:{judge_label}\n"
+        f"条件:{trigger}\n"
+        f"{price_label}:{sc['entry_price']} / 目標1:{sc['target1']} / 目標2:{sc['target2']}\n"
+        f"ノックアウト:{sc['ko_price']}\n"
+        f"根拠:{sc['ko_reason']}"
+    )
+
 def format_fixed_report(symbol_name: str, current_price: float, data: dict) -> str:
     m, s = data["main_scenario"], data["sub_scenario"]
     return f"""【{symbol_name}】統合レポート ({RUN_TS} JST)
@@ -342,14 +356,10 @@ def format_fixed_report(symbol_name: str, current_price: float, data: dict) -> s
 {data['disagreement']}
 
 ■メインシナリオ(確率{m['probability_pct']}%): {m['action']}
-エントリー:{m['entry_price']} / 目標1:{m['target1']} / 目標2:{m['target2']}
-ノックアウト:{m['ko_price']}
-根拠:{m['ko_reason']}
+{_format_scenario_block(m)}
 
 ■サブシナリオ(確率{s['probability_pct']}%): {s['action']}
-エントリー:{s['entry_price']} / 目標1:{s['target1']} / 目標2:{s['target2']}
-ノックアウト:{s['ko_price']}
-根拠:{s['ko_reason']}
+{_format_scenario_block(s)}
 
 ■注意点
 {data['risk_note']}
@@ -372,7 +382,7 @@ def generate_chart(symbol_name: str, df_1h: pd.DataFrame, data: dict, out_path: 
     levels = [
         ("サポート", data["support"], "#2ca02c"),
         ("レジスタンス", data["resistance"], "#d62728"),
-        ("エントリー", m["entry_price"], "#9467bd"),
+        ("エントリー基準", m["entry_price"], "#9467bd"),
         ("目標1", m["target1"], "#1a9850"),
         ("目標2", m["target2"], "#1a9850"),
         ("KO", m["ko_price"], "#d62728"),
@@ -476,7 +486,14 @@ async def analyze_market(symbol_name: str, ticker_symbol: str, symbol_slug: str,
 1. 多数決で安易に決めず、ダウ理論の根拠が最も客観的なものを採用する
 2. 意見が対立している点があれば「メインシナリオ」「サブシナリオ」として併記し、両方に確率(%)を必ずつける(2つの確率は合計100に近い値にする)
 3. ノックアウト価格はノイズ回避を考慮した安全な水準にする
-4. 出力は必ず以下のJSON形式のみ。説明文やコードブロック記号(```)は一切付けない。数値は全て数字のみ(単位や記号を含めない)。
+4. 【最重要】エントリーは「現在値とほぼ同じ価格」を安易に提示しないこと。
+   entry_typeは"immediate"(即エントリー)と"conditional"(条件待ち)のどちらかを選ぶ。
+   - "immediate"にしてよいのは、現在値がまさに理想的なエントリーポイントであり、
+     かつ既にブレイクや反転などの明確な確認シグナルが出ている場合のみ。安易な多用は禁止。
+   - それ以外は必ず"conditional"とし、entry_triggerに「4時間足で○○を上抜けたら」
+     「1時間足で○○を下抜けた後に戻りを確認したら」のように、4時間足・1時間足レベルの
+     具体的な価格・条件を1文で記述すること。entry_priceにはそのトリガーとなる価格を入れる。
+5. 出力は必ず以下のJSON形式のみ。説明文やコードブロック記号(```)は一切付けない。数値は全て数字のみ(単位や記号を含めない)。
 
 {{
   "common_view": "共通認識を1〜2文で",
@@ -489,6 +506,8 @@ async def analyze_market(symbol_name: str, ticker_symbol: str, symbol_slug: str,
   "main_scenario": {{
     "action": "戻り売り/押し目買い/ブレイク追随など短い一言",
     "probability_pct": 数値,
+    "entry_type": "immediate または conditional",
+    "entry_trigger": "4時間足/1時間足の具体的な条件を1文で",
     "entry_price": 数値,
     "target1": 数値,
     "target2": 数値,
@@ -498,6 +517,8 @@ async def analyze_market(symbol_name: str, ticker_symbol: str, symbol_slug: str,
   "sub_scenario": {{
     "action": "短い一言",
     "probability_pct": 数値,
+    "entry_type": "immediate または conditional",
+    "entry_trigger": "4時間足/1時間足の具体的な条件を1文で",
     "entry_price": 数値,
     "target1": 数値,
     "target2": 数値,
