@@ -529,12 +529,15 @@ async def analyze_market(symbol_name: str, ticker_symbol: str, symbol_slug: str,
 }}
 """
 
-    print("--- ファシリテーター（Gemini）による中立統合を実行中... ---")
+    print("--- ファシリテーターによる中立統合を実行中(Gemini→Groq→OpenRouterの順で試行)... ---")
     facilitator_start = time.monotonic()
     parsed = None
+    used_by = None
+
+    # 1. Gemini(第一候補)
     for candidate in GEMINI_MODEL_CANDIDATES:
         try:
-            print(f"  ...model={candidate} で試行中 ({int(time.monotonic() - facilitator_start)}秒経過)")
+            print(f"  ...Gemini model={candidate} で試行中 ({int(time.monotonic() - facilitator_start)}秒経過)")
             kwargs = {"model": candidate, "contents": facilitator_prompt,
                       "config": {"response_mime_type": "application/json"}}
             try:
@@ -549,20 +552,60 @@ async def analyze_market(symbol_name: str, ticker_symbol: str, symbol_slug: str,
                 )
             parsed = parse_json_response(final_response.text)
             if parsed is not None:
-                print(f"  ✅ model={candidate} でJSON形式の統合レポートを取得しました")
+                used_by = f"Gemini:{candidate}"
                 break
             else:
-                print(f"  ⚠️ model={candidate} の応答をJSONとして解析できませんでした。次の候補を試します。")
-                print(f"     生の応答(先頭300字): {final_response.text[:300]}")
+                print(f"  ⚠️ model={candidate} の応答をJSONとして解析できませんでした。次を試します。")
         except asyncio.TimeoutError:
-            print(f"  (model={candidate} がタイムアウトしました)")
+            print(f"  (Gemini model={candidate} がタイムアウトしました)")
         except Exception as e:
-            print(f"  (model={candidate} で失敗: {type(e).__name__}: {e})")
+            print(f"  (Gemini model={candidate} で失敗: {type(e).__name__}: {e})")
+
+    # 2. Geminiが全滅した場合はGroqで代役
+    if parsed is None:
+        print("  ⚠️ Geminiが全滅したため、Groqでファシリテーターの代役を試みます")
+        try:
+            res = await asyncio.wait_for(
+                groq_client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[{"role": "user", "content": facilitator_prompt}],
+                ),
+                timeout=AGENT_HARD_TIMEOUT_SEC,
+            )
+            content = res.choices[0].message.content if res.choices else None
+            if content:
+                parsed = parse_json_response(content)
+                if parsed is not None:
+                    used_by = f"Groq:{GROQ_MODEL}"
+        except Exception as e:
+            print(f"  (Groqでの代役も失敗: {type(e).__name__}: {e})")
+
+    # 3. それでもダメならOpenRouterの無料モデルで代役
+    if parsed is None:
+        for model_id in free_models:
+            print(f"  ⚠️ OpenRouter {model_id} でファシリテーターの代役を試みます")
+            try:
+                res = await asyncio.wait_for(
+                    openrouter_client.chat.completions.create(
+                        model=model_id,
+                        messages=[{"role": "user", "content": facilitator_prompt}],
+                    ),
+                    timeout=AGENT_HARD_TIMEOUT_SEC,
+                )
+                content = res.choices[0].message.content if res.choices else None
+                if content:
+                    parsed = parse_json_response(content)
+                    if parsed is not None:
+                        used_by = f"OpenRouter:{model_id}"
+                        break
+            except Exception as e:
+                print(f"  (OpenRouter {model_id} での代役も失敗: {type(e).__name__}: {e})")
 
     if parsed is None:
-        print(f"ファシリテーターによる統合に失敗しました({symbol_name})。")
+        print(f"ファシリテーターによる統合に失敗しました({symbol_name})。Gemini/Groq/OpenRouterすべて失敗。")
         return []
 
+    print(f"  ✅ {used_by} でJSON形式の統合レポートを取得しました")
     fixed_text = format_fixed_report(symbol_name, current_price, parsed)
     print("\n" + fixed_text)
 
