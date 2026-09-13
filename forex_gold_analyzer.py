@@ -303,10 +303,27 @@ async def gather_with_progress(labeled_coros, heartbeat_interval=15):
 # ---------------------------------------------------------
 # 3b. JSON解析 & 固定フォーマット組み立て
 # ---------------------------------------------------------
-REQUIRED_SCENARIO_KEYS = ["action", "probability_pct", "entry_type", "entry_trigger",
+REQUIRED_SCENARIO_KEYS = ["action", "probability_pct", "direction", "entry_type", "entry_trigger",
                           "entry_price", "target1", "target2", "ko_price", "ko_reason"]
 REQUIRED_TOP_KEYS = ["common_view", "disagreement", "daily_trend", "h4_trend", "h1_trend",
                      "support", "resistance", "main_scenario", "sub_scenario", "risk_note"]
+DIRECTION_LABEL = {"buy": "買い(ロング)", "sell": "売り(ショート)"}
+
+def _scenario_direction_valid(sc: dict) -> bool:
+    """売り(sell)ならKO>エントリー>目標、買い(buy)ならKO<エントリー<目標、という
+    IG証券ノックアウトオプションの大小関係を満たしているかを機械的にチェックする。"""
+    try:
+        direction = sc.get("direction")
+        entry = float(sc["entry_price"])
+        ko = float(sc["ko_price"])
+        t1 = float(sc["target1"])
+    except (TypeError, ValueError, KeyError):
+        return False
+    if direction == "sell":
+        return ko > entry > t1
+    elif direction == "buy":
+        return ko < entry < t1
+    return False
 
 def parse_json_response(raw_text: str):
     text = raw_text.strip()
@@ -322,7 +339,10 @@ def parse_json_response(raw_text: str):
             if all(k in data for k in REQUIRED_TOP_KEYS) and \
                all(k in data["main_scenario"] for k in REQUIRED_SCENARIO_KEYS) and \
                all(k in data["sub_scenario"] for k in REQUIRED_SCENARIO_KEYS):
-                return data
+                if _scenario_direction_valid(data["main_scenario"]) and _scenario_direction_valid(data["sub_scenario"]):
+                    return data
+                else:
+                    print("  ⚠️ 売買方向とエントリー/ノックアウト/目標値の大小関係が矛盾しているため、この応答は破棄します")
         except (json.JSONDecodeError, TypeError, KeyError):
             continue
     return None
@@ -332,7 +352,9 @@ def _format_scenario_block(sc: dict) -> str:
     judge_label = "即エントリー" if is_immediate else "条件待ち"
     trigger = sc.get("entry_trigger", "(記載なし)")
     price_label = "エントリー価格" if is_immediate else "トリガー価格"
+    direction_label = DIRECTION_LABEL.get(sc.get("direction"), sc.get("direction", "不明"))
     return (
+        f"方向:{direction_label}\n"
         f"判断:{judge_label}\n"
         f"条件:{trigger}\n"
         f"{price_label}:{sc['entry_price']} / 目標1:{sc['target1']} / 目標2:{sc['target2']}\n"
@@ -493,7 +515,17 @@ async def analyze_market(symbol_name: str, ticker_symbol: str, symbol_slug: str,
    - それ以外は必ず"conditional"とし、entry_triggerに「4時間足で○○を上抜けたら」
      「1時間足で○○を下抜けた後に戻りを確認したら」のように、4時間足・1時間足レベルの
      具体的な価格・条件を1文で記述すること。entry_priceにはそのトリガーとなる価格を入れる。
-5. 出力は必ず以下のJSON形式のみ。説明文やコードブロック記号(```)は一切付けない。数値は全て数字のみ(単位や記号を含めない)。
+5. 【最重要・売買方向の整合性】directionフィールドに"buy"(買い)か"sell"(売り)を明記し、
+   IG証券ノックアウトオプションの以下の大小関係を必ず守ること。これを間違えると
+   ノックアウトが機能しなくなる致命的なミスになる。
+   - direction="sell"(売り/ショート)の場合:
+     ko_price(ノックアウト) > entry_price(エントリー) > target1 > target2
+     (ノックアウトは必ずエントリーより上、利確目標は必ずエントリーより下)
+   - direction="buy"(買い/ロング)の場合:
+     ko_price(ノックアウト) < entry_price(エントリー) < target1 < target2
+     (ノックアウトは必ずエントリーより下、利確目標は必ずエントリーより上)
+   出力前に必ずこの大小関係を自己検算し、矛盾していれば数値を修正してから出力すること。
+6. 出力は必ず以下のJSON形式のみ。説明文やコードブロック記号(```)は一切付けない。数値は全て数字のみ(単位や記号を含めない)。
 
 {{
   "common_view": "共通認識を1〜2文で",
@@ -506,6 +538,7 @@ async def analyze_market(symbol_name: str, ticker_symbol: str, symbol_slug: str,
   "main_scenario": {{
     "action": "戻り売り/押し目買い/ブレイク追随など短い一言",
     "probability_pct": 数値,
+    "direction": "buy または sell",
     "entry_type": "immediate または conditional",
     "entry_trigger": "4時間足/1時間足の具体的な条件を1文で",
     "entry_price": 数値,
@@ -517,6 +550,7 @@ async def analyze_market(symbol_name: str, ticker_symbol: str, symbol_slug: str,
   "sub_scenario": {{
     "action": "短い一言",
     "probability_pct": 数値,
+    "direction": "buy または sell",
     "entry_type": "immediate または conditional",
     "entry_trigger": "4時間足/1時間足の具体的な条件を1文で",
     "entry_price": 数値,
