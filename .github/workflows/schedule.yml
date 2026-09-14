@@ -28,9 +28,12 @@ jobs:
           python-version: "3.12"
 
       - name: Node.jsをセットアップ
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@8207627b1c218a8c48e6f41ecb80dfc7a4e0a1b8 # v7.0.0
         with:
           node-version: "22"
+
+      - name: 前回の通知データを削除
+        run: rm -f notify_payloads.json
 
       - name: 依存パッケージをインストール
         run: |
