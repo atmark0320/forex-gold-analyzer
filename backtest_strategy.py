@@ -6,14 +6,15 @@ import json
 from dataclasses import asdict, dataclass
 
 import pandas as pd
-import yfinance as yf
 
-from technical_engine import StrategyConfig, generate_trade_plan, resample_ohlc
+from market_data_provider import build_timeframes, fetch_ohlc
+from technical_engine import StrategyConfig, generate_trade_plan
 
 
 @dataclass
 class BacktestResult:
     symbol: str
+    data_source: str
     trades: int
     wins: int
     losses: int
@@ -27,12 +28,8 @@ class BacktestResult:
     max_consecutive_losses: int
 
 
-def load_data(symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    daily = yf.Ticker(symbol).history(period="2y", interval="1d", auto_adjust=False)
-    h1 = yf.Ticker(symbol).history(period="60d", interval="1h", auto_adjust=False)
-    if daily.empty or h1.empty:
-        raise RuntimeError(f"No data for {symbol}")
-    return daily, h1
+def load_data(symbol: str) -> pd.DataFrame:
+    return fetch_ohlc(symbol, days=730)
 
 
 def _trade_result(plan, future: pd.DataFrame, entry: float, stop: float, target: float) -> float | None:
@@ -45,8 +42,6 @@ def _trade_result(plan, future: pd.DataFrame, entry: float, stop: float, target:
             hit_sl = float(bar["Low"]) <= stop
             hit_tp = float(bar["High"]) >= target
             if hit_sl:
-                # Conservative convention: if SL and TP are both touched in the same bar,
-                # assume the stop was hit first because intrabar ordering is unknown.
                 return -1.0
             if hit_tp:
                 return abs(target - entry) / abs(entry - stop)
@@ -65,21 +60,15 @@ def _trade_result(plan, future: pd.DataFrame, entry: float, stop: float, target:
 
 def evaluate(
     symbol: str,
-    daily: pd.DataFrame,
     h1: pd.DataFrame,
     cfg: StrategyConfig = StrategyConfig(),
     max_hold_bars: int = 48,
     entry_valid_bars: int = 3,
 ) -> BacktestResult:
-    """Chronological, non-overlapping evaluation.
-
-    At each decision point only bars available at that time are passed to the strategy.
-    A signal can trigger within ``entry_valid_bars`` future candles. Once entered, the
-    evaluator waits until the trade resolves before looking for a new one.
-    """
+    """Chronological, non-overlapping evaluation using only information available at decision time."""
     h1 = h1.sort_index().copy()
-    h4 = resample_ohlc(h1, "4h")
-    daily = daily.sort_index().copy()
+    _, h4_full = build_timeframes(h1)
+    daily_full, _ = build_timeframes(h1)
 
     outcomes: list[float] = []
     equity = 0.0
@@ -90,8 +79,8 @@ def evaluate(
     while i < len(h1) - 2:
         decision_time = h1.index[i]
         h1_hist = h1.iloc[: i + 1]
-        h4_hist = h4.loc[:decision_time]
-        daily_hist = daily.loc[:decision_time]
+        h4_hist = h4_full.loc[:decision_time]
+        daily_hist = daily_full.loc[:decision_time]
         if len(h4_hist) < 30 or len(daily_hist) < 60:
             i += 1
             continue
@@ -113,10 +102,9 @@ def evaluate(
             i += 1
             continue
 
-        search_end = min(i + 1 + entry_valid_bars, len(h1))
-        entry_start = i + 1
         trigger_idx = None
-        for j in range(entry_start, search_end):
+        search_end = min(i + 1 + entry_valid_bars, len(h1))
+        for j in range(i + 1, search_end):
             bar = h1.iloc[j]
             if plan.direction == "buy" and float(bar["High"]) >= entry:
                 trigger_idx = j
@@ -156,6 +144,7 @@ def evaluate(
 
     return BacktestResult(
         symbol=symbol,
+        data_source="Dukascopy XAUUSD/FX spot BID 1H",
         trades=trades,
         wins=len(wins),
         losses=len(losses),
@@ -171,11 +160,10 @@ def evaluate(
 
 
 def main() -> None:
-    symbols = {"USDJPY": "JPY=X", "GOLD_FUTURES_GC": "GC=F"}
     results = []
-    for name, symbol in symbols.items():
-        daily, h1 = load_data(symbol)
-        results.append(asdict(evaluate(name, daily, h1)))
+    for symbol in ("USDJPY", "XAUUSD"):
+        h1 = load_data(symbol)
+        results.append(asdict(evaluate(symbol, h1)))
     print(json.dumps(results, ensure_ascii=False, indent=2))
 
 
