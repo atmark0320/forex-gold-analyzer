@@ -35,7 +35,7 @@ jobs:
           python-version: "3.12"
 
       - name: Node.jsをセットアップ
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
 
@@ -49,7 +49,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: USD/JPY・XAU/USDスポット バックテスト
-        run: python backtest_strategy.py > backtest_results.json
+        run: python backtest_strategy.py | tee backtest_results.json
 
       - name: バックテスト結果を保存
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
