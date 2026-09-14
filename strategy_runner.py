@@ -5,16 +5,17 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-from market_data_provider import build_timeframes, fetch_ohlc
+from market_data_provider import build_timeframes, fetch_ohlc, latest_completed_4h_time
 from technical_engine import StrategyConfig, generate_trade_plan, timeframe_snapshot
 
 JST = timezone(timedelta(hours=9))
+UTC = timezone.utc
 RUN_TS = datetime.now(JST).strftime("%Y%m%d_%H%M")
 PAYLOAD_FILE = "notify_payloads.json"
 
-MARKETS = {
+SYMBOLS = {
     "ドル円 (USD/JPY)": "USDJPY",
-    "金スポット (XAU/USD)": "XAUUSD",
+    "金 (XAU/USD スポット)": "XAUUSD",
 }
 
 
@@ -32,17 +33,38 @@ def dow_name(value: str) -> str:
     }.get(value, value)
 
 
-def build_report(name: str, symbol: str, h1) -> str:
+def expected_4h_start(now: datetime | None = None):
+    current = now or datetime.now(UTC)
+    stamp = datetime.fromtimestamp(current.timestamp(), tz=UTC)
+    block_hour = (stamp.hour // 4) * 4
+    current_block = stamp.replace(hour=block_hour, minute=0, second=0, microsecond=0)
+    return current_block - timedelta(hours=4)
+
+
+def is_new_4h_ready(h1, now: datetime | None = None) -> tuple[bool, str]:
+    latest = latest_completed_4h_time(h1)
+    expected = expected_4h_start(now)
+    if latest is None:
+        return False, "確定済み4H足がありません"
+    latest_utc = latest.to_pydatetime().astimezone(UTC)
+    if latest_utc >= expected:
+        return True, f"分析対象4H足: {latest_utc.isoformat()}"
+    return False, f"最新の完全4H足 {latest_utc.isoformat()} / 今回対象 {expected.isoformat()}"
+
+
+def build_report(name: str, symbol: str, daily, h4, h1, h4_start) -> str:
     cfg = StrategyConfig()
-    daily, h4 = build_timeframes(h1)
     plan = generate_trade_plan(daily, h4, h1, cfg)
-    ds, hs4, hs1 = timeframe_snapshot(daily, cfg), timeframe_snapshot(h4, cfg), timeframe_snapshot(h1, cfg)
+    ds = timeframe_snapshot(daily, cfg)
+    hs4 = timeframe_snapshot(h4, cfg)
+    hs1 = timeframe_snapshot(h1, cfg)
     p = plan.to_dict()
 
     direction = {"buy": "買い", "sell": "売り", "wait": "見送り"}[p["direction"]]
+    h4_label = h4_start.astimezone(JST).strftime("%Y-%m-%d %H:%M JST開始")
     lines = [
-        f"【{name}】ダウ理論ベース・テクニカル戦略 ({RUN_TS} JST)",
-        f"データ: Dukascopy {symbol} BID / 1H",
+        f"【{name}】4H確定時・ダウ理論ベース戦略 ({RUN_TS} JST)",
+        f"分析4H足: {h4_label}",
         f"現在値: {fmt_price(hs1['close'], symbol)}",
         "",
         "■ダウ理論による環境認識（最重要）",
@@ -75,9 +97,9 @@ def build_report(name: str, symbol: str, h1) -> str:
         *[f"・{reason}" for reason in p["reasons"]],
         "",
         f"■無効化条件: {p['invalidation']}",
-        "※ダウ理論を予測の根幹とし、EMA・RSI・MACD・ADXは補助的な確認に使用しています。",
-        "※XAU/USDは金スポットであり、COMEX金先物(GC=F)は使用しません。",
-        "※これはテクニカル分析による戦略候補であり、利益や将来価格を保証する予測ではありません。",
+        "※予測の根幹はダウ理論。EMA・RSI・MACD・ADXは補助的な確認に使用しています。",
+        "※XAU/USDはスポット価格（Dukascopy BID 1H）を使用しています。",
+        "※これはテクニカル分析による戦略候補であり、利益や将来価格を保証するものではありません。",
     ]
     return "\n".join(lines)
 
@@ -85,20 +107,41 @@ def build_report(name: str, symbol: str, h1) -> str:
 def main() -> None:
     payloads: list[dict] = []
     failures: list[str] = []
-    for name, symbol in MARKETS.items():
+    reference_h4 = None
+
+    for name, symbol in SYMBOLS.items():
         try:
             h1 = fetch_ohlc(symbol, days=450)
-            text = build_report(name, symbol, h1)
+            ready, detail = is_new_4h_ready(h1)
+            print(f"{name}: {detail}")
+            if not ready:
+                continue
+
+            daily, h4 = build_timeframes(h1)
+            h4_start = latest_completed_4h_time(h1)
+            if h4_start is None:
+                continue
+            if reference_h4 is None or h4_start > reference_h4:
+                reference_h4 = h4_start
+
+            text = build_report(name, symbol, daily, h4, h1, h4_start)
             payloads.append({"type": "text", "text": text})
             print(text)
         except Exception as exc:
             failures.append(f"{name}: {type(exc).__name__}: {exc}")
             print(f"ERROR {name}: {exc}")
 
+    if not payloads and failures:
+        raise RuntimeError("USD/JPY・XAU/USDスポットの戦略生成に失敗しました: " + "; ".join(failures))
+
+    if not payloads:
+        # Scheduled runs can legitimately be skipped when a complete 4H candle has not formed
+        # (e.g. weekend or holiday). Do not send stale analysis or report a false failure.
+        print("No new complete 4H candle is ready; skipping notification.")
+        return
+
     with open(PAYLOAD_FILE, "w", encoding="utf-8") as f:
         json.dump(payloads, f, ensure_ascii=False, indent=2)
-    if not payloads:
-        raise RuntimeError("USD/JPY・XAU/USDの両方で戦略生成に失敗しました: " + "; ".join(failures))
 
 
 if __name__ == "__main__":
