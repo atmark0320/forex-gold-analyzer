@@ -132,7 +132,6 @@ def evaluate(
         future = h1.iloc[trigger_idx : min(trigger_idx + max_hold_bars, len(h1))]
         r = _trade_result(plan, future, entry, stop, target)
         if r is None:
-            # No resolution inside the holding window: do not manufacture an outcome.
             i = max(i + 1, trigger_idx + max_hold_bars)
             continue
 
@@ -140,7 +139,6 @@ def evaluate(
         equity += float(r)
         peak = max(peak, equity)
         max_dd = max(max_dd, peak - equity)
-        # No overlapping positions: resume after the trade's holding window.
         i = max(i + 1, trigger_idx + max_hold_bars)
 
     wins = [x for x in outcomes if x > 0]
@@ -173,7 +171,7 @@ def evaluate(
 
 
 def main() -> None:
-    symbols = {"USDJPY": "JPY=X", "GOLD": "GC=F"}
+    symbols = {"USDJPY": "JPY=X", "GOLD_FUTURES_GC": "GC=F"}
     results = []
     for name, symbol in symbols.items():
         daily, h1 = load_data(symbol)
