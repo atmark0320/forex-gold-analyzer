@@ -77,12 +77,14 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
 
 
 def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.DataFrame:
-    """Fetch hourly BID candles from Dukascopy for USDJPY or XAUUSD spot."""
+    """Fetch completed hourly BID candles from Dukascopy for USDJPY or XAUUSD spot."""
     key = symbol.upper().replace("/", "")
     instrument = SYMBOLS.get(key)
     if instrument is None:
         raise ValueError(f"Unsupported market-data symbol: {symbol}")
-    end = end or datetime.now(timezone.utc)
+    # Never include the currently forming hourly candle.
+    end = (end or datetime.now(timezone.utc)) - timedelta(hours=1)
+    end = end.replace(minute=0, second=0, microsecond=0)
     start = end - timedelta(days=days)
     df = _run_dukascopy(instrument, start, end)
     if len(df) < 300:
