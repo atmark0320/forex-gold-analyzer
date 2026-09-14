@@ -1,37 +1,25 @@
-"""Production entrypoint for deterministic USD/JPY and Gold strategies."""
+"""Production entrypoint for deterministic USD/JPY and XAU/USD spot strategies."""
 
 from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
 
-import pandas as pd
-import yfinance as yf
-
-from technical_engine import StrategyConfig, generate_trade_plan, resample_ohlc, timeframe_snapshot
+from market_data_provider import build_timeframes, fetch_ohlc
+from technical_engine import StrategyConfig, generate_trade_plan, timeframe_snapshot
 
 JST = timezone(timedelta(hours=9))
 RUN_TS = datetime.now(JST).strftime("%Y%m%d_%H%M")
 PAYLOAD_FILE = "notify_payloads.json"
 
-SYMBOLS = {
-    "ドル円 (USD/JPY)": "JPY=X",
-    "金 (GOLD / GC=F)": "GC=F",
+MARKETS = {
+    "ドル円 (USD/JPY)": "USDJPY",
+    "金スポット (XAU/USD)": "XAUUSD",
 }
 
 
-def fetch(symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return long-history daily data and recent 1H data."""
-    ticker = yf.Ticker(symbol)
-    daily = ticker.history(period="2y", interval="1d", auto_adjust=False)
-    h1 = ticker.history(period="60d", interval="1h", auto_adjust=False)
-    if daily.empty or h1.empty:
-        raise RuntimeError(f"{symbol}: market data is empty")
-    return daily, h1
-
-
 def fmt_price(value: float, symbol: str) -> str:
-    digits = 3 if symbol == "JPY=X" else 2
+    digits = 3 if symbol == "USDJPY" else 2
     return f"{value:.{digits}f}"
 
 
@@ -44,9 +32,9 @@ def dow_name(value: str) -> str:
     }.get(value, value)
 
 
-def build_report(name: str, symbol: str, daily: pd.DataFrame, h1: pd.DataFrame) -> str:
+def build_report(name: str, symbol: str, h1) -> str:
     cfg = StrategyConfig()
-    h4 = resample_ohlc(h1, "4h")
+    daily, h4 = build_timeframes(h1)
     plan = generate_trade_plan(daily, h4, h1, cfg)
     ds, hs4, hs1 = timeframe_snapshot(daily, cfg), timeframe_snapshot(h4, cfg), timeframe_snapshot(h1, cfg)
     p = plan.to_dict()
@@ -54,6 +42,7 @@ def build_report(name: str, symbol: str, daily: pd.DataFrame, h1: pd.DataFrame) 
     direction = {"buy": "買い", "sell": "売り", "wait": "見送り"}[p["direction"]]
     lines = [
         f"【{name}】ダウ理論ベース・テクニカル戦略 ({RUN_TS} JST)",
+        f"データ: Dukascopy {symbol} BID / 1H",
         f"現在値: {fmt_price(hs1['close'], symbol)}",
         "",
         "■ダウ理論による環境認識（最重要）",
@@ -87,6 +76,7 @@ def build_report(name: str, symbol: str, daily: pd.DataFrame, h1: pd.DataFrame) 
         "",
         f"■無効化条件: {p['invalidation']}",
         "※ダウ理論を予測の根幹とし、EMA・RSI・MACD・ADXは補助的な確認に使用しています。",
+        "※XAU/USDは金スポットであり、COMEX金先物(GC=F)は使用しません。",
         "※これはテクニカル分析による戦略候補であり、利益や将来価格を保証する予測ではありません。",
     ]
     return "\n".join(lines)
@@ -95,10 +85,10 @@ def build_report(name: str, symbol: str, daily: pd.DataFrame, h1: pd.DataFrame) 
 def main() -> None:
     payloads: list[dict] = []
     failures: list[str] = []
-    for name, symbol in SYMBOLS.items():
+    for name, symbol in MARKETS.items():
         try:
-            daily, h1 = fetch(symbol)
-            text = build_report(name, symbol, daily, h1)
+            h1 = fetch_ohlc(symbol, days=450)
+            text = build_report(name, symbol, h1)
             payloads.append({"type": "text", "text": text})
             print(text)
         except Exception as exc:
@@ -108,7 +98,7 @@ def main() -> None:
     with open(PAYLOAD_FILE, "w", encoding="utf-8") as f:
         json.dump(payloads, f, ensure_ascii=False, indent=2)
     if not payloads:
-        raise RuntimeError("USD/JPY・Goldの両方で戦略生成に失敗しました: " + "; ".join(failures))
+        raise RuntimeError("USD/JPY・XAU/USDの両方で戦略生成に失敗しました: " + "; ".join(failures))
 
 
 if __name__ == "__main__":
