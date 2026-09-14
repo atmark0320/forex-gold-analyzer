@@ -70,10 +70,26 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
         raise RuntimeError(f"Dukascopy CSV columns are missing: {sorted(missing)}")
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
     df = df.set_index("timestamp").sort_index()
-    df = df.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
+    df = df.rename(
+        columns={
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+        }
+    )
     keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
     df = df[keep]
+    df = df.loc[~df.index.duplicated(keep="last")]
     return df.loc[(df.index >= start) & (df.index <= end)]
+
+
+def _drop_forming_h1(df: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
+    """Remove the currently-forming hourly candle so live and backtest logic match."""
+    current = now or datetime.now(timezone.utc)
+    current_hour = pd.Timestamp(current).tz_convert("UTC").floor("h")
+    return df.loc[df.index < current_hour].copy()
 
 
 def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.DataFrame:
@@ -82,23 +98,44 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     instrument = SYMBOLS.get(key)
     if instrument is None:
         raise ValueError(f"Unsupported market-data symbol: {symbol}")
-    # Never include the currently forming hourly candle.
-    end = (end or datetime.now(timezone.utc)) - timedelta(hours=1)
-    end = end.replace(minute=0, second=0, microsecond=0)
+    end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=days)
     df = _run_dukascopy(instrument, start, end)
+    df = _drop_forming_h1(df, end)
     if len(df) < 300:
         raise RuntimeError(f"{symbol}: insufficient Dukascopy hourly data ({len(df)} bars)")
     return df
 
 
 def build_timeframes(h1: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build only fully-formed UTC 4H candles and complete UTC daily candles."""
+    x = h1.copy().sort_index()
+    x = x.loc[~x.index.duplicated(keep="last")]
+
     agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
-    if "Volume" in h1.columns:
+    if "Volume" in x.columns:
         agg["Volume"] = "sum"
-    h4 = h1.resample("4h").agg(agg).dropna(subset=["Open", "High", "Low", "Close"])
-    daily = h1.resample("1D").agg(agg).dropna(subset=["Open", "High", "Low", "Close"])
+
+    # Dukascopy standard 4H candles are UTC/GMT anchored; 4H and longer periods
+    # are built from hourly data. Require four completed hourly observations per 4H bar.
+    grouped = x.resample("4h", origin="epoch", label="left", closed="left")
+    counts = grouped["Close"].count()
+    h4 = grouped.agg(agg)
+    h4 = h4.loc[counts == 4].dropna(subset=["Open", "High", "Low", "Close"])
+
+    daily_grouped = x.resample("1D", origin="epoch", label="left", closed="left")
+    daily_counts = daily_grouped["Close"].count()
+    daily = daily_grouped.agg(agg)
+    # A normal FX trading day normally contributes many hourly observations.
+    # Use at least 18 to avoid treating a weekend/holiday fragment as a daily bar.
+    daily = daily.loc[daily_counts >= 18].dropna(subset=["Open", "High", "Low", "Close"])
     return daily, h4
 
 
-__all__ = ["fetch_ohlc", "build_timeframes"]
+def latest_completed_4h_time(h1: pd.DataFrame) -> pd.Timestamp | None:
+    """Return the start timestamp of the newest fully completed 4H candle."""
+    _, h4 = build_timeframes(h1)
+    return h4.index[-1] if not h4.empty else None
+
+
+__all__ = ["fetch_ohlc", "build_timeframes", "latest_completed_4h_time"]
