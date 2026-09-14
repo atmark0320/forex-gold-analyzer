@@ -1,11 +1,10 @@
 name: forex-gold-analyzer
 
 on:
+  # Dukascopy standard 4H candles are UTC anchored. Run 5 minutes after
+  # each 4H boundary so the newly closed candle is available.
   schedule:
-    - cron: "5 18 * * 1-5"
-    - cron: "5 0 * * 1-5"
-    - cron: "5 6 * * 1-5"
-    - cron: "5 12 * * 1-5"
+    - cron: "5 0,4,8,12,16,20 * * *"
   workflow_dispatch: {}
 
 concurrency:
@@ -21,10 +20,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: リポジトリをチェックアウト
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Pythonをセットアップ
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -42,11 +41,11 @@ jobs:
       - name: 自動テスト
         run: python -m unittest discover -s tests -v
 
-      - name: テクニカル戦略を生成
+      - name: 4H確定時のテクニカル戦略を生成
         run: python strategy_runner.py
 
-      - name: Telegramへ送信
-        if: success()
+      - name: 新しい4H分析がある場合のみTelegramへ送信
+        if: success() && hashFiles('notify_payloads.json') != ''
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
