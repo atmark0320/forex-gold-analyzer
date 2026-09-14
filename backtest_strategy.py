@@ -1,9 +1,4 @@
-"""Walk-forward evaluator for the deterministic strategy engine.
-
-No future bars are used to build a signal. Entry is evaluated on the next bar,
-and TP/SL are evaluated from subsequent OHLC bars. When TP and SL occur in the
-same bar, the conservative assumption is that SL was hit first.
-"""
+"""Walk-forward evaluator for the deterministic strategy engine."""
 
 from __future__ import annotations
 
@@ -28,32 +23,31 @@ class BacktestResult:
     max_drawdown_r: float
 
 
-def load_1h(symbol: str) -> pd.DataFrame:
-    df = yf.Ticker(symbol).history(period="60d", interval="1h", auto_adjust=False)
-    if df.empty:
+def load_data(symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    daily = yf.Ticker(symbol).history(period="2y", interval="1d", auto_adjust=False)
+    h1 = yf.Ticker(symbol).history(period="60d", interval="1h", auto_adjust=False)
+    if daily.empty or h1.empty:
         raise RuntimeError(f"No data for {symbol}")
-    return df
+    return daily, h1
 
 
-def evaluate(symbol: str, df: pd.DataFrame, cfg: StrategyConfig = StrategyConfig()) -> BacktestResult:
-    h1 = df.sort_index().copy()
+def evaluate(symbol: str, daily: pd.DataFrame, h1: pd.DataFrame, cfg: StrategyConfig = StrategyConfig()) -> BacktestResult:
+    h1 = h1.sort_index().copy()
     h4 = resample_ohlc(h1, "4h")
-    # For a short validation window, build daily bars from the same 1H history.
-    # Production uses the longer daily history in strategy_runner.py.
-    daily = resample_ohlc(h1, "1D")
+    daily = daily.sort_index().copy()
 
     equity = 0.0
     peak = 0.0
     max_dd = 0.0
     outcomes: list[float] = []
+    max_hold_bars = 48
 
-    # Use only completed bars before the decision bar.
     for i in range(80, len(h1) - 2):
         decision_time = h1.index[i]
         h1_hist = h1.iloc[: i + 1]
         h4_hist = h4.loc[:decision_time]
         daily_hist = daily.loc[:decision_time]
-        if len(h4_hist) < 30 or len(daily_hist) < 20:
+        if len(h4_hist) < 30 or len(daily_hist) < 60:
             continue
         try:
             plan = generate_trade_plan(daily_hist, h4_hist, h1_hist, cfg)
@@ -62,7 +56,6 @@ def evaluate(symbol: str, df: pd.DataFrame, cfg: StrategyConfig = StrategyConfig
         if plan.direction == "wait" or plan.entry_price is None:
             continue
 
-        # Next bar is the earliest possible execution; no same-bar hindsight.
         entry_bar = h1.iloc[i + 1]
         entry = float(plan.entry_price)
         stop = float(plan.stop_price)
@@ -71,10 +64,12 @@ def evaluate(symbol: str, df: pd.DataFrame, cfg: StrategyConfig = StrategyConfig
         if risk <= 0:
             continue
 
+        future = h1.iloc[i + 1 : i + 1 + max_hold_bars]
+        r = None
         if plan.direction == "buy":
             if float(entry_bar["High"]) < entry:
                 continue
-            for _, bar in h1.iloc[i + 1 :].iterrows():
+            for _, bar in future.iterrows():
                 hit_sl = float(bar["Low"]) <= stop
                 hit_tp = float(bar["High"]) >= target
                 if hit_sl and hit_tp:
@@ -86,12 +81,10 @@ def evaluate(symbol: str, df: pd.DataFrame, cfg: StrategyConfig = StrategyConfig
                 if hit_tp:
                     r = abs(target - entry) / risk
                     break
-            else:
-                continue
         else:
             if float(entry_bar["Low"]) > entry:
                 continue
-            for _, bar in h1.iloc[i + 1 :].iterrows():
+            for _, bar in future.iterrows():
                 hit_sl = float(bar["High"]) >= stop
                 hit_tp = float(bar["Low"]) <= target
                 if hit_sl and hit_tp:
@@ -103,9 +96,10 @@ def evaluate(symbol: str, df: pd.DataFrame, cfg: StrategyConfig = StrategyConfig
                 if hit_tp:
                     r = abs(entry - target) / risk
                     break
-            else:
-                continue
 
+        # Unresolved trades are not counted as wins/losses.
+        if r is None:
+            continue
         outcomes.append(float(r))
         equity += float(r)
         peak = max(peak, equity)
@@ -130,7 +124,8 @@ def main() -> None:
     symbols = {"USDJPY": "JPY=X", "GOLD": "GC=F"}
     results = []
     for name, symbol in symbols.items():
-        results.append(asdict(evaluate(name, load_1h(symbol))))
+        daily, h1 = load_data(symbol)
+        results.append(asdict(evaluate(name, daily, h1)))
     print(json.dumps(results, ensure_ascii=False, indent=2))
 
 
