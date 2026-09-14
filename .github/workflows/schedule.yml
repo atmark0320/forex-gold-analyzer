@@ -2,19 +2,19 @@ name: forex-gold-analyzer
 
 on:
   schedule:
-    # 6時間足の更新タイミング(UTC 0/6/12/18時)の5分後 = JST 3/9/15/21時に実行
-    # 市場は「月曜朝(JST)〜土曜早朝(JST)」動いているため、
-    # 月曜3時(市場が開く前)と、日曜・土曜午前以降(市場が閉じた後)は対象から外している。
-    # cronの曜日指定はUTC基準になるが、今回のケースでも
-    # 「UTC月〜金(1-5)」の指定だけで上記の条件をすべて満たせる。
-    - cron: "5 18 * * 1-5"   # JST 3:00  (火〜土のみ実行。月は市場開場前のため対象外)
-    - cron: "5 0 * * 1-5"    # JST 9:00  (月〜金のみ実行。土日は市場クローズのため対象外)
-    - cron: "5 6 * * 1-5"    # JST 15:00 (月〜金のみ実行)
-    - cron: "5 12 * * 1-5"   # JST 21:00 (月〜金のみ実行。金のこの回はNY市場がまだ動いている)
-  workflow_dispatch: {}   # Actions画面の「Run workflow」ボタンで手動実行するため
+    - cron: "5 18 * * 1-5"
+    - cron: "5 0 * * 1-5"
+    - cron: "5 6 * * 1-5"
+    - cron: "5 12 * * 1-5"
+  workflow_dispatch: {}
+
+# Prevent overlapping runs from racing on main.
+concurrency:
+  group: forex-gold-analyzer
+  cancel-in-progress: false
 
 permissions:
-  contents: write   # チャート画像をリポジトリにcommit/pushするために必要
+  contents: write
 
 jobs:
   run-analysis:
@@ -28,46 +28,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 日本語フォントをインストール(チャートの文字化け防止)
-        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
-
       - name: 依存パッケージをインストール
         run: pip install -r requirements.txt
 
-      - name: 相場分析を実行(チャート画像とnotify_payloads.jsonを生成)
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: python forex_gold_analyzer.py
-
-      # 実行タイミングが重なるとリモートのmainが先に進んでいて
-      # 単純なgit pushが失敗することがあるため、pull --rebaseしてから
-      # push、失敗したら少し待って最大5回までリトライする
-      - name: 生成したチャート画像をリポジトリにpush
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add charts/
-          if git diff --staged --quiet; then
-            echo "コミットする変更はありません"
-          else
-            git commit -m "chore: update charts (${{ github.run_id }})"
-            success=false
-            for i in 1 2 3 4 5; do
-              if git pull --rebase origin main && git push; then
-                success=true
-                break
-              fi
-              echo "push失敗。${i}回目のリトライ前に待機します..."
-              sleep $((i * 5))
-            done
-            if [ "$success" = false ]; then
-              echo "::error::5回リトライしてもpushに失敗しました"
-              exit 1
-            fi
-          fi
+      - name: テクニカル戦略を生成
+        run: python strategy_runner.py
 
       - name: Telegramへ送信
         if: always()
