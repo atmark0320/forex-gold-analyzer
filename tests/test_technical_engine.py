@@ -22,17 +22,26 @@ def make_ohlc(closes: list[float]) -> pd.DataFrame:
 
 class TechnicalEngineTests(unittest.TestCase):
     def test_dow_uptrend(self):
-        # Repeating stair-steps create confirmed higher highs and higher lows.
-        closes = [100, 99, 101, 100, 103, 101, 105, 103, 107, 105, 109, 107, 111, 109, 113, 111, 115]
+        closes = [
+            100, 95, 92, 105, 99, 96, 112, 106, 102,
+            120, 114, 110, 128, 121, 118,
+        ]
         result = dow_structure(make_ohlc(closes), StrategyConfig())
         self.assertEqual(result["trend"], "up")
         self.assertGreater(result["last_swing_high"], result["last_swing_low"])
+        self.assertGreaterEqual(result["confirmed_highs"], 2)
+        self.assertGreaterEqual(result["confirmed_lows"], 2)
 
     def test_dow_downtrend(self):
-        closes = [115, 116, 113, 115, 111, 113, 109, 111, 107, 109, 105, 107, 103, 105, 101, 103, 99]
+        closes = [
+            120, 125, 128, 115, 121, 124, 110, 116, 119,
+            105, 112, 115, 100, 108, 111,
+        ]
         result = dow_structure(make_ohlc(closes), StrategyConfig())
         self.assertEqual(result["trend"], "down")
         self.assertLess(result["last_swing_low"], result["last_swing_high"])
+        self.assertGreaterEqual(result["confirmed_highs"], 2)
+        self.assertGreaterEqual(result["confirmed_lows"], 2)
 
     def test_trade_plan_never_inverts_risk(self):
         base = 100 + np.linspace(0, 30, 320) + 2 * np.sin(np.arange(320) / 3.0)
@@ -43,9 +52,11 @@ class TechnicalEngineTests(unittest.TestCase):
         if plan.direction == "buy":
             self.assertLess(plan.stop_price, plan.entry_price)
             self.assertGreater(plan.target1, plan.entry_price)
+            self.assertGreater(plan.target2, plan.target1)
         elif plan.direction == "sell":
             self.assertGreater(plan.stop_price, plan.entry_price)
             self.assertLess(plan.target1, plan.entry_price)
+            self.assertLess(plan.target2, plan.target1)
 
 
 if __name__ == "__main__":
