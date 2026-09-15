@@ -64,7 +64,10 @@ jobs:
 
       - name: USD/JPY・XAU/USD・主要通貨ペア バックテスト
         timeout-minutes: 330
-        run: python backtest_strategy.py | tee backtest_results.json
+        shell: bash
+        run: |
+          set -o pipefail
+          python -u backtest_strategy.py | tee backtest_results.json
 
       - name: 市場データキャッシュを保存
         if: always()
