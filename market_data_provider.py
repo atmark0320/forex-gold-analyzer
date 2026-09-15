@@ -20,9 +20,13 @@ SYMBOLS = {
     "USDCHF": "usdchf",
 }
 DOWNLOAD_CHUNK_DAYS = 120
-REFRESH_DAYS = 14
-MAX_DOWNLOAD_ATTEMPTS = 4
+REFRESH_DAYS = int(os.environ.get("FOREX_DATA_REFRESH_DAYS", "14"))
+MAX_DOWNLOAD_ATTEMPTS = 5
 CACHE_DIR = Path(os.environ.get("FOREX_DATA_CACHE_DIR", ".cache/market_data"))
+DUKASCOPY_CACHE_DIR = CACHE_DIR / "dukascopy_artifacts"
+BATCH_SIZE = int(os.environ.get("DUKASCOPY_BATCH_SIZE", "2"))
+BATCH_PAUSE_MS = int(os.environ.get("DUKASCOPY_BATCH_PAUSE_MS", "5000"))
+RETRY_PAUSE_MS = int(os.environ.get("DUKASCOPY_RETRY_PAUSE_MS", "10000"))
 
 
 def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFrame:
@@ -30,8 +34,8 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
     end = end.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
     if end <= start:
         raise ValueError("end must be after start")
-
     last_error = ""
+    DUKASCOPY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
         try:
             with tempfile.TemporaryDirectory(prefix="dukascopy_") as tmp:
@@ -44,14 +48,15 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
                     "-to", end.strftime("%Y-%m-%d"),
                     "-t", "h1", "-p", "bid", "-f", "csv",
                     "-dir", str(out_dir), "-fn", file_name,
-                    "-ch", "-chpath", str(out_dir / ".dukascopy-cache"),
-                    "-r", "3", "-re", "-s",
+                    "-bs", str(BATCH_SIZE), "-bp", str(BATCH_PAUSE_MS),
+                    "-ch", "-chpath", str(DUKASCOPY_CACHE_DIR),
+                    "-r", "2", "-rp", str(RETRY_PAUSE_MS), "-re", "-s",
                 ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
                 if result.returncode != 0:
-                    last_error = result.stderr[-2000:] or result.stdout[-2000:]
+                    last_error = result.stderr[-4000:] or result.stdout[-4000:]
                     if "429" in last_error and attempt < MAX_DOWNLOAD_ATTEMPTS:
-                        time.sleep(2 ** attempt * 5)
+                        time.sleep(RETRY_PAUSE_MS / 1000 * attempt)
                         continue
                     raise RuntimeError("Dukascopy download failed: " + last_error)
                 path = out_dir / file_name
@@ -61,7 +66,6 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
                         raise RuntimeError("Dukascopy returned no CSV data")
                     path = candidates[0]
                 df = pd.read_csv(path)
-
             required = {"timestamp", "open", "high", "low", "close"}
             missing = required.difference(df.columns)
             if missing:
@@ -74,10 +78,10 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
             df = df.loc[~df.index.duplicated(keep="last")]
             return df.loc[(df.index >= start) & (df.index <= end)]
         except subprocess.TimeoutExpired as exc:
-            last_error = f"Dukascopy download timed out after 300s: {exc}"
+            last_error = f"Dukascopy download timed out after 900s: {exc}"
             if attempt == MAX_DOWNLOAD_ATTEMPTS:
                 raise RuntimeError(last_error) from exc
-            time.sleep(2 ** attempt * 5)
+            time.sleep(RETRY_PAUSE_MS / 1000 * attempt)
     raise RuntimeError("Dukascopy download failed: " + last_error)
 
 
@@ -110,7 +114,7 @@ def _save_cached(key: str, df: pd.DataFrame) -> None:
 
 
 def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.DataFrame:
-    """Fetch completed hourly BID candles, reusing cached history and refreshing only the recent window."""
+    """Fetch completed hourly BID candles, reusing cached history and refreshing only when requested."""
     key = symbol.upper().replace("/", "")
     instrument = SYMBOLS.get(key)
     if instrument is None:
@@ -120,15 +124,22 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     cached = _load_cached(key)
 
     if cached is not None and not cached.empty and cached.index.min() <= pd.Timestamp(start, tz="UTC"):
-        refresh_start = max(start, end - timedelta(days=REFRESH_DAYS))
-        fresh = _run_dukascopy(instrument, refresh_start, end)
-        df = pd.concat([cached.loc[cached.index < pd.Timestamp(refresh_start, tz="UTC")], fresh])
+        if REFRESH_DAYS > 0:
+            refresh_start = max(start, end - timedelta(days=REFRESH_DAYS))
+            fresh = _run_dukascopy(instrument, refresh_start, end)
+            df = pd.concat([cached.loc[cached.index < pd.Timestamp(refresh_start, tz="UTC")], fresh])
+        else:
+            df = cached
     else:
         chunks: list[pd.DataFrame] = []
         cursor = start
         while cursor < end:
             chunk_end = min(cursor + timedelta(days=DOWNLOAD_CHUNK_DAYS), end)
-            chunks.append(_run_dukascopy(instrument, cursor, chunk_end))
+            chunk = _run_dukascopy(instrument, cursor, chunk_end)
+            chunks.append(chunk)
+            combined = pd.concat(chunks).sort_index()
+            combined = combined.loc[~combined.index.duplicated(keep="last")]
+            _save_cached(key, combined)
             cursor = chunk_end
             if cursor < end:
                 time.sleep(5)
