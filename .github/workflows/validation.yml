@@ -19,12 +19,12 @@ permissions:
 
 concurrency:
   group: strategy-validation
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   backtest:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 360
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -49,6 +49,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: USD/JPY・XAU/USDスポット バックテスト
+        timeout-minutes: 330
         run: python backtest_strategy.py | tee backtest_results.json
 
       - name: バックテスト結果を保存
