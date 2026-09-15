@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import time
@@ -12,9 +13,16 @@ DUKASCOPY_VERSION = "1.50.0"
 SYMBOLS = {
     "USDJPY": "usdjpy",
     "XAUUSD": "xauusd",
+    "EURUSD": "eurusd",
+    "GBPUSD": "gbpusd",
+    "AUDUSD": "audusd",
+    "USDCAD": "usdcad",
+    "USDCHF": "usdchf",
 }
 DOWNLOAD_CHUNK_DAYS = 120
+REFRESH_DAYS = 14
 MAX_DOWNLOAD_ATTEMPTS = 4
+CACHE_DIR = Path(os.environ.get("FOREX_DATA_CACHE_DIR", ".cache/market_data"))
 
 
 def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFrame:
@@ -30,32 +38,14 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
                 out_dir = Path(tmp)
                 file_name = f"{instrument}_{start:%Y%m%d}_{end:%Y%m%d}.csv"
                 cmd = [
-                    "npx",
-                    "--yes",
-                    f"dukascopy-node@{DUKASCOPY_VERSION}",
-                    "-i",
-                    instrument,
-                    "-from",
-                    start.strftime("%Y-%m-%d"),
-                    "-to",
-                    end.strftime("%Y-%m-%d"),
-                    "-t",
-                    "h1",
-                    "-p",
-                    "bid",
-                    "-f",
-                    "csv",
-                    "-dir",
-                    str(out_dir),
-                    "-fn",
-                    file_name,
-                    "-ch",
-                    "-chpath",
-                    str(out_dir / ".dukascopy-cache"),
-                    "-r",
-                    "3",
-                    "-re",
-                    "-s",
+                    "npx", "--yes", f"dukascopy-node@{DUKASCOPY_VERSION}",
+                    "-i", instrument,
+                    "-from", start.strftime("%Y-%m-%d"),
+                    "-to", end.strftime("%Y-%m-%d"),
+                    "-t", "h1", "-p", "bid", "-f", "csv",
+                    "-dir", str(out_dir), "-fn", file_name,
+                    "-ch", "-chpath", str(out_dir / ".dukascopy-cache"),
+                    "-r", "3", "-re", "-s",
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode != 0:
@@ -78,15 +68,7 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
                 raise RuntimeError(f"Dukascopy CSV columns are missing: {sorted(missing)}")
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
             df = df.set_index("timestamp").sort_index()
-            df = df.rename(
-                columns={
-                    "open": "Open",
-                    "high": "High",
-                    "low": "Low",
-                    "close": "Close",
-                    "volume": "Volume",
-                }
-            )
+            df = df.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
             keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
             df = df[keep]
             df = df.loc[~df.index.duplicated(keep="last")]
@@ -100,52 +82,78 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
 
 
 def _drop_forming_h1(df: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
-    """Remove the currently-forming hourly candle so live and backtest logic match."""
     current = now or datetime.now(timezone.utc)
     current_hour = pd.Timestamp(current).tz_convert("UTC").floor("h")
     return df.loc[df.index < current_hour].copy()
 
 
+def _cache_path(key: str) -> Path:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return CACHE_DIR / f"{key.lower()}.csv.gz"
+
+
+def _load_cached(key: str) -> pd.DataFrame | None:
+    path = _cache_path(key)
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path, index_col=0, parse_dates=True, compression="gzip")
+        df.index = pd.to_datetime(df.index, utc=True)
+        return df.sort_index()
+    except Exception:
+        return None
+
+
+def _save_cached(key: str, df: pd.DataFrame) -> None:
+    path = _cache_path(key)
+    df.to_csv(path, compression="gzip", index_label="timestamp")
+
+
 def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.DataFrame:
-    """Fetch completed hourly BID candles from Dukascopy for USDJPY or XAUUSD spot."""
+    """Fetch completed hourly BID candles, reusing cached history and refreshing only the recent window."""
     key = symbol.upper().replace("/", "")
     instrument = SYMBOLS.get(key)
     if instrument is None:
         raise ValueError(f"Unsupported market-data symbol: {symbol}")
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=days)
+    cached = _load_cached(key)
 
-    chunks: list[pd.DataFrame] = []
-    cursor = start
-    while cursor < end:
-        chunk_end = min(cursor + timedelta(days=DOWNLOAD_CHUNK_DAYS), end)
-        chunks.append(_run_dukascopy(instrument, cursor, chunk_end))
-        cursor = chunk_end
-        if cursor < end:
-            time.sleep(5)
+    if cached is not None and not cached.empty and cached.index.min() <= pd.Timestamp(start, tz="UTC"):
+        refresh_start = max(start, end - timedelta(days=REFRESH_DAYS))
+        fresh = _run_dukascopy(instrument, refresh_start, end)
+        df = pd.concat([cached.loc[cached.index < pd.Timestamp(refresh_start, tz="UTC")], fresh])
+    else:
+        chunks: list[pd.DataFrame] = []
+        cursor = start
+        while cursor < end:
+            chunk_end = min(cursor + timedelta(days=DOWNLOAD_CHUNK_DAYS), end)
+            chunks.append(_run_dukascopy(instrument, cursor, chunk_end))
+            cursor = chunk_end
+            if cursor < end:
+                time.sleep(5)
+        df = pd.concat(chunks)
 
-    df = pd.concat(chunks).sort_index()
+    df = df.sort_index()
     df = df.loc[~df.index.duplicated(keep="last")]
     df = _drop_forming_h1(df, end)
+    df = df.loc[(df.index >= pd.Timestamp(start, tz="UTC")) & (df.index < pd.Timestamp(end, tz="UTC"))]
     if len(df) < 300:
         raise RuntimeError(f"{symbol}: insufficient Dukascopy hourly data ({len(df)} bars)")
+    _save_cached(key, df)
     return df
 
 
 def build_timeframes(h1: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build only fully-formed UTC 4H candles and complete UTC daily candles."""
     x = h1.copy().sort_index()
     x = x.loc[~x.index.duplicated(keep="last")]
-
     agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
     if "Volume" in x.columns:
         agg["Volume"] = "sum"
-
     grouped = x.resample("4h", origin="epoch", label="left", closed="left")
     counts = grouped["Close"].count()
     h4 = grouped.agg(agg)
     h4 = h4.loc[counts == 4].dropna(subset=["Open", "High", "Low", "Close"])
-
     daily_grouped = x.resample("1D", label="left", closed="left")
     daily_counts = daily_grouped["Close"].count()
     daily = daily_grouped.agg(agg)
@@ -154,7 +162,6 @@ def build_timeframes(h1: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def latest_completed_4h_time(h1: pd.DataFrame) -> pd.Timestamp | None:
-    """Return the start timestamp of the newest fully completed 4H candle."""
     _, h4 = build_timeframes(h1)
     return h4.index[-1] if not h4.empty else None
 
