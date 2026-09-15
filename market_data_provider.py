@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
+import yfinance as yf
 
 DUKASCOPY_VERSION = "1.50.0"
 SYMBOLS = {
@@ -18,6 +19,15 @@ SYMBOLS = {
     "AUDUSD": "audusd",
     "USDCAD": "usdcad",
     "USDCHF": "usdchf",
+}
+YFINANCE_SYMBOLS = {
+    "USDJPY": "JPY=X",
+    "XAUUSD": "XAUUSD=X",
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X",
+    "AUDUSD": "AUDUSD=X",
+    "USDCAD": "CAD=X",
+    "USDCHF": "CHF=X",
 }
 DOWNLOAD_CHUNK_DAYS = 120
 REFRESH_DAYS = int(os.environ.get("FOREX_DATA_REFRESH_DAYS", "14"))
@@ -85,6 +95,49 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
     raise RuntimeError("Dukascopy download failed: " + last_error)
 
 
+def _run_yfinance(symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
+    """Fallback market data source when Dukascopy is temporarily rate-limited."""
+    ticker = YFINANCE_SYMBOLS[symbol]
+    df = yf.download(
+        ticker,
+        start=start.astimezone(timezone.utc),
+        end=end.astimezone(timezone.utc),
+        interval="1h",
+        auto_adjust=False,
+        progress=False,
+        threads=False,
+    )
+    if df is None or df.empty:
+        raise RuntimeError(f"Yahoo Finance returned no hourly data for {ticker}")
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    rename = {"Open": "Open", "High": "High", "Low": "Low", "Close": "Close", "Volume": "Volume"}
+    df = df.rename(columns=rename)
+    required = ["Open", "High", "Low", "Close"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise RuntimeError(f"Yahoo Finance columns are missing: {missing}")
+    df.index = pd.to_datetime(df.index, utc=True)
+    keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
+    df = df[keep].sort_index()
+    df = df.loc[~df.index.duplicated(keep="last")]
+    return df.loc[(df.index >= pd.Timestamp(start).tz_convert("UTC")) & (df.index <= pd.Timestamp(end).tz_convert("UTC"))]
+
+
+def _download_with_fallback(symbol: str, instrument: str, start: datetime, end: datetime) -> pd.DataFrame:
+    try:
+        return _run_dukascopy(instrument, start, end)
+    except Exception as dukascopy_error:
+        print(f"WARNING {symbol}: Dukascopy failed; using Yahoo Finance spot/FX fallback: {dukascopy_error}", flush=True)
+        try:
+            return _run_yfinance(symbol, start, end)
+        except Exception as fallback_error:
+            raise RuntimeError(
+                f"{symbol}: Dukascopy and Yahoo Finance fallback both failed. "
+                f"Dukascopy={dukascopy_error}; Yahoo={fallback_error}"
+            ) from fallback_error
+
+
 def _drop_forming_h1(df: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
     current = now or datetime.now(timezone.utc)
     current_hour = pd.Timestamp(current).tz_convert("UTC").floor("h")
@@ -114,7 +167,7 @@ def _save_cached(key: str, df: pd.DataFrame) -> None:
 
 
 def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.DataFrame:
-    """Fetch completed hourly BID candles, reusing cached history and refreshing only when requested."""
+    """Fetch completed hourly candles, preferring Dukascopy and falling back to Yahoo Finance when rate-limited."""
     key = symbol.upper().replace("/", "")
     instrument = SYMBOLS.get(key)
     if instrument is None:
@@ -129,7 +182,7 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
         if REFRESH_DAYS > 0:
             refresh_start = max(start, end - timedelta(days=REFRESH_DAYS))
             refresh_start_ts = pd.Timestamp(refresh_start).tz_convert("UTC")
-            fresh = _run_dukascopy(instrument, refresh_start, end)
+            fresh = _download_with_fallback(key, instrument, refresh_start, end)
             df = pd.concat([cached.loc[cached.index < refresh_start_ts], fresh])
         else:
             df = cached
@@ -138,7 +191,7 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
         cursor = start
         while cursor < end:
             chunk_end = min(cursor + timedelta(days=DOWNLOAD_CHUNK_DAYS), end)
-            chunk = _run_dukascopy(instrument, cursor, chunk_end)
+            chunk = _download_with_fallback(key, instrument, cursor, chunk_end)
             chunks.append(chunk)
             combined = pd.concat(chunks).sort_index()
             combined = combined.loc[~combined.index.duplicated(keep="last")]
@@ -153,7 +206,7 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     df = _drop_forming_h1(df, end)
     df = df.loc[(df.index >= start_ts) & (df.index < end_ts)]
     if len(df) < 300:
-        raise RuntimeError(f"{symbol}: insufficient Dukascopy hourly data ({len(df)} bars)")
+        raise RuntimeError(f"{symbol}: insufficient hourly data ({len(df)} bars)")
     _save_cached(key, df)
     return df
 
