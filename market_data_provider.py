@@ -13,7 +13,7 @@ SYMBOLS = {
     "USDJPY": "usdjpy",
     "XAUUSD": "xauusd",
 }
-DOWNLOAD_CHUNK_DAYS = 30
+DOWNLOAD_CHUNK_DAYS = 120
 MAX_DOWNLOAD_ATTEMPTS = 4
 
 
@@ -115,8 +115,6 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=days)
 
-    # Long single requests can trigger Dukascopy rate limits. Download bounded
-    # chunks, pause between chunks, then concatenate and deduplicate locally.
     chunks: list[pd.DataFrame] = []
     cursor = start
     while cursor < end:
@@ -124,7 +122,7 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
         chunks.append(_run_dukascopy(instrument, cursor, chunk_end))
         cursor = chunk_end
         if cursor < end:
-            time.sleep(2)
+            time.sleep(5)
 
     df = pd.concat(chunks).sort_index()
     df = df.loc[~df.index.duplicated(keep="last")]
@@ -143,8 +141,6 @@ def build_timeframes(h1: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if "Volume" in x.columns:
         agg["Volume"] = "sum"
 
-    # Dukascopy standard 4H candles are UTC/GMT anchored; 4H and longer periods
-    # are built from hourly data. Require four completed hourly observations per 4H bar.
     grouped = x.resample("4h", origin="epoch", label="left", closed="left")
     counts = grouped["Close"].count()
     h4 = grouped.agg(agg)
@@ -153,8 +149,6 @@ def build_timeframes(h1: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     daily_grouped = x.resample("1D", label="left", closed="left")
     daily_counts = daily_grouped["Close"].count()
     daily = daily_grouped.agg(agg)
-    # A normal FX trading day normally contributes many hourly observations.
-    # Use at least 18 to avoid treating a weekend/holiday fragment as a daily bar.
     daily = daily.loc[daily_counts >= 18].dropna(subset=["Open", "High", "Low", "Close"])
     return daily, h4
 
