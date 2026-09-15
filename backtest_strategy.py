@@ -10,6 +10,8 @@ import pandas as pd
 from market_data_provider import build_timeframes, fetch_ohlc
 from technical_engine import StrategyConfig, generate_trade_plan
 
+BACKTEST_SYMBOLS = ("USDJPY", "XAUUSD", "EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF")
+
 
 @dataclass
 class BacktestResult:
@@ -58,22 +60,13 @@ def _trade_result(plan, future: pd.DataFrame, entry: float, stop: float, target:
     return None
 
 
-def evaluate(
-    symbol: str,
-    h1: pd.DataFrame,
-    cfg: StrategyConfig = StrategyConfig(),
-    max_hold_bars: int = 48,
-    entry_valid_bars: int = 3,
-) -> BacktestResult:
+def evaluate(symbol: str, h1: pd.DataFrame, cfg: StrategyConfig = StrategyConfig(), max_hold_bars: int = 48, entry_valid_bars: int = 3) -> BacktestResult:
     """Chronological, non-overlapping evaluation using only information available at decision time."""
     h1 = h1.sort_index().copy()
     _, h4_full = build_timeframes(h1)
     daily_full, _ = build_timeframes(h1)
-
     outcomes: list[float] = []
-    equity = 0.0
-    peak = 0.0
-    max_dd = 0.0
+    equity = peak = max_dd = 0.0
     i = 80
 
     while i < len(h1) - 2:
@@ -84,7 +77,6 @@ def evaluate(
         if len(h4_hist) < 30 or len(daily_hist) < 60:
             i += 1
             continue
-
         try:
             plan = generate_trade_plan(daily_hist, h4_hist, h1_hist, cfg)
         except Exception:
@@ -97,8 +89,7 @@ def evaluate(
         entry = float(plan.entry_price)
         stop = float(plan.stop_price)
         target = float(plan.target1)
-        risk = abs(entry - stop)
-        if risk <= 0:
+        if abs(entry - stop) <= 0:
             i += 1
             continue
 
@@ -112,7 +103,6 @@ def evaluate(
             if plan.direction == "sell" and float(bar["Low"]) <= entry:
                 trigger_idx = j
                 break
-
         if trigger_idx is None:
             i += 1
             continue
@@ -144,7 +134,7 @@ def evaluate(
 
     return BacktestResult(
         symbol=symbol,
-        data_source="Dukascopy XAUUSD/FX spot BID 1H",
+        data_source="Dukascopy spot BID 1H",
         trades=trades,
         wins=len(wins),
         losses=len(losses),
@@ -161,7 +151,7 @@ def evaluate(
 
 def main() -> None:
     results = []
-    for symbol in ("USDJPY", "XAUUSD"):
+    for symbol in BACKTEST_SYMBOLS:
         h1 = load_data(symbol)
         results.append(asdict(evaluate(symbol, h1)))
     print(json.dumps(results, ensure_ascii=False, indent=2))
