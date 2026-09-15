@@ -121,13 +121,16 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
         raise ValueError(f"Unsupported market-data symbol: {symbol}")
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=days)
+    start_ts = pd.Timestamp(start).tz_convert("UTC")
+    end_ts = pd.Timestamp(end).tz_convert("UTC")
     cached = _load_cached(key)
 
-    if cached is not None and not cached.empty and cached.index.min() <= pd.Timestamp(start, tz="UTC"):
+    if cached is not None and not cached.empty and cached.index.min() <= start_ts:
         if REFRESH_DAYS > 0:
             refresh_start = max(start, end - timedelta(days=REFRESH_DAYS))
+            refresh_start_ts = pd.Timestamp(refresh_start).tz_convert("UTC")
             fresh = _run_dukascopy(instrument, refresh_start, end)
-            df = pd.concat([cached.loc[cached.index < pd.Timestamp(refresh_start, tz="UTC")], fresh])
+            df = pd.concat([cached.loc[cached.index < refresh_start_ts], fresh])
         else:
             df = cached
     else:
@@ -148,7 +151,7 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     df = df.sort_index()
     df = df.loc[~df.index.duplicated(keep="last")]
     df = _drop_forming_h1(df, end)
-    df = df.loc[(df.index >= pd.Timestamp(start, tz="UTC")) & (df.index < pd.Timestamp(end, tz="UTC"))]
+    df = df.loc[(df.index >= start_ts) & (df.index < end_ts)]
     if len(df) < 300:
         raise RuntimeError(f"{symbol}: insufficient Dukascopy hourly data ({len(df)} bars)")
     _save_cached(key, df)
