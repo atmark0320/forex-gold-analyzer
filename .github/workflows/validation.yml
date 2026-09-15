@@ -22,14 +22,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  backtest:
+  backtest-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     env:
       FOREX_DATA_REFRESH_DAYS: "0"
       DUKASCOPY_BATCH_SIZE: "2"
       DUKASCOPY_BATCH_PAUSE_MS: "5000"
       DUKASCOPY_RETRY_PAUSE_MS: "10000"
+      BACKTEST_DAYS: "90"
+      BACKTEST_SYMBOLS: "USDJPY"
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -63,12 +65,21 @@ jobs:
       - name: ユニットテスト
         run: python -m unittest discover -s tests -v
 
-      - name: USD/JPY・XAU/USD・主要通貨ペア バックテスト
-        timeout-minutes: 40
+      - name: スモークバックテスト（90日・USDJPY）
+        timeout-minutes: 10
         shell: bash
         run: |
           set -o pipefail
-          python -u backtest_strategy.py | tee backtest_results.json
+          python -u backtest_strategy.py | tee backtest.log
+          test -s backtest_results.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("backtest_results.json")
+          data = json.loads(p.read_text(encoding="utf-8"))
+          assert len(data) == 1 and data[0]["symbol"] == "USDJPY"
+          print("RESULT_VALID", data)
+          PY
 
       - name: 市場データキャッシュを保存
         if: always()
@@ -77,12 +88,14 @@ jobs:
           path: .cache/market_data
           key: dukascopy-h1-v2-${{ github.run_id }}
 
-      - name: バックテスト結果を保存
+      - name: スモーク結果を保存
         if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: strategy-validation-results
-          path: backtest_results.json
+          name: strategy-validation-smoke-results
+          path: |
+            backtest_results.json
+            backtest.log
           retention-days: 14
 
-# Temporary frequent validation schedule until the data pipeline is confirmed stable.
+# Full 730-day / 7-symbol validation will be enabled after the smoke test is proven stable.
