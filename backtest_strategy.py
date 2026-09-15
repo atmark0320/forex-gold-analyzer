@@ -1,9 +1,8 @@
-"""Fast, deterministic backtest for the Dow-first strategy engine.
+"""Deterministic Dow-first backtest with bounded execution cost.
 
-The important design point is that indicators and Dow snapshots are computed once
-per timeframe. The old implementation rebuilt every historical dataframe and
-recomputed all indicators on every H1 decision bar, which made a 730-day,
-7-symbol run unnecessarily expensive.
+Backtest decisions are evaluated once per completed 4H candle, matching the live
+strategy's decision timeframe. Entry is still executed on subsequent H1 candles.
+This avoids repeatedly rebuilding the same signal four times per 4H block.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from dataclasses import asdict, dataclass
 import pandas as pd
 
 from market_data_provider import build_timeframes, fetch_ohlc
-from technical_engine import StrategyConfig, add_indicators, dow_structure, generate_trade_plan
+from technical_engine import StrategyConfig, add_indicators, generate_trade_plan
 
 DEFAULT_SYMBOLS = ("USDJPY", "XAUUSD", "EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF")
 
@@ -49,8 +48,7 @@ def selected_symbols() -> tuple[str, ...]:
     raw = os.environ.get("BACKTEST_SYMBOLS", "").strip()
     if not raw:
         return DEFAULT_SYMBOLS
-    wanted = tuple(x.strip().upper() for x in raw.split(",") if x.strip())
-    return wanted or DEFAULT_SYMBOLS
+    return tuple(x.strip().upper() for x in raw.split(",") if x.strip()) or DEFAULT_SYMBOLS
 
 
 def load_data(symbol: str) -> pd.DataFrame:
@@ -64,7 +62,6 @@ def _trade_result(direction: str, future: pd.DataFrame, entry: float, stop: floa
         if float(future.iloc[0]["High"]) < entry:
             return None
         for _, bar in future.iterrows():
-            # Conservative ordering when both are touched in one bar.
             if float(bar["Low"]) <= stop:
                 return -1.0
             if float(bar["High"]) >= target:
@@ -80,19 +77,6 @@ def _trade_result(direction: str, future: pd.DataFrame, entry: float, stop: floa
     return None
 
 
-def _prepare_frames(h1: pd.DataFrame, cfg: StrategyConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Prepare H1/H4/D1 indicators once instead of once per decision bar."""
-    daily_raw, h4_raw = build_timeframes(h1)
-    h1_ind = add_indicators(h1, cfg)
-    h4_ind = add_indicators(h4_raw, cfg)
-    daily_ind = add_indicators(daily_raw, cfg)
-    return h1_ind, h4_ind, daily_ind
-
-
-def _historical_slice(frame: pd.DataFrame, timestamp: pd.Timestamp) -> pd.DataFrame:
-    return frame.loc[:timestamp]
-
-
 def evaluate(
     symbol: str,
     h1: pd.DataFrame,
@@ -100,44 +84,56 @@ def evaluate(
     max_hold_bars: int = 48,
     entry_valid_bars: int = 3,
 ) -> BacktestResult:
-    """Chronological, non-overlapping evaluation using only information available at decision time."""
-    h1, h4_full, daily_full = _prepare_frames(h1.sort_index().copy(), cfg)
+    """Evaluate only at completed 4H decision points, then execute on H1."""
+    h1 = h1.sort_index().copy()
+    daily_raw, h4_raw = build_timeframes(h1)
+
+    # Indicator calculation itself is now performed once per complete frame.
+    # generate_trade_plan can consume these frames without changing the trading rules.
+    h1_ind = add_indicators(h1, cfg)
+    h4_ind = add_indicators(h4_raw, cfg)
+    daily_ind = add_indicators(daily_raw, cfg)
+
+    # A completed 4H candle starting at T becomes actionable at the first H1
+    # candle after T+4H. We use the H1 timestamp at the 4H block boundary as the
+    # decision bar, which prevents forming 4H candles from entering the signal.
+    decision_positions: list[int] = []
+    h4_index = set(h4_ind.index)
+    for i, ts in enumerate(h1_ind.index):
+        if ts in h4_index and i >= 80:
+            decision_positions.append(i)
+
     outcomes: list[float] = []
     equity = peak = max_dd = 0.0
-    i = 80
-    total = len(h1)
+    total = len(decision_positions)
 
-    while i < total - 2:
-        decision_time = h1.index[i]
-        h4_hist = _historical_slice(h4_full, decision_time)
-        daily_hist = _historical_slice(daily_full, decision_time)
+    for n, i in enumerate(decision_positions, 1):
+        decision_time = h1_ind.index[i]
+        h4_hist = h4_ind.loc[:decision_time]
+        daily_hist = daily_ind.loc[:decision_time]
         if len(h4_hist) < 30 or len(daily_hist) < 60:
-            i += 1
             continue
 
-        # generate_trade_plan still owns the exact trading rules. Passing already
-        # calculated frames makes the expensive indicator stage cheap.
-        h1_hist = h1.iloc[: i + 1]
+        # Use the already-indicated H1 history. This preserves the chronological
+        # information boundary while avoiding repeated indicator calculations.
+        h1_hist = h1_ind.iloc[: i + 1]
         try:
             plan = generate_trade_plan(daily_hist, h4_hist, h1_hist, cfg)
         except Exception:
-            i += 1
             continue
         if plan.direction == "wait" or plan.entry_price is None or plan.stop_price is None or plan.target1 is None:
-            i += 1
             continue
 
         entry = float(plan.entry_price)
         stop = float(plan.stop_price)
         target = float(plan.target1)
         if abs(entry - stop) <= 0:
-            i += 1
             continue
 
         trigger_idx = None
-        search_end = min(i + 1 + entry_valid_bars, total)
+        search_end = min(i + 1 + entry_valid_bars, len(h1_ind))
         for j in range(i + 1, search_end):
-            bar = h1.iloc[j]
+            bar = h1_ind.iloc[j]
             if plan.direction == "buy" and float(bar["High"]) >= entry:
                 trigger_idx = j
                 break
@@ -145,20 +141,26 @@ def evaluate(
                 trigger_idx = j
                 break
         if trigger_idx is None:
-            i += 1
             continue
 
-        future = h1.iloc[trigger_idx : min(trigger_idx + max_hold_bars, total)]
+        future = h1_ind.iloc[trigger_idx : min(trigger_idx + max_hold_bars, len(h1_ind))]
         r = _trade_result(plan.direction, future, entry, stop, target)
         if r is None:
-            i = max(i + 1, trigger_idx + max_hold_bars)
             continue
 
         outcomes.append(float(r))
         equity += float(r)
         peak = max(peak, equity)
         max_dd = max(max_dd, peak - equity)
-        i = max(i + 1, trigger_idx + max_hold_bars)
+
+        # Keep trades non-overlapping exactly as before.
+        next_positions = [p for p in decision_positions if p >= trigger_idx + max_hold_bars]
+        if next_positions:
+            decision_positions = decision_positions[:n] + next_positions
+            total = len(decision_positions)
+
+        if n % 250 == 0:
+            print(f"    {symbol}: decisions {n:,}, trades {len(outcomes):,}", flush=True)
 
     wins = [x for x in outcomes if x > 0]
     losses = [x for x in outcomes if x < 0]
@@ -201,7 +203,7 @@ def main() -> None:
         symbol_started = time.monotonic()
         print(f"[{n}/{len(symbols)}] loading {symbol}...", flush=True)
         h1 = load_data(symbol)
-        print(f"[{n}/{len(symbols)}] {symbol}: {len(h1):,} H1 bars; evaluating...", flush=True)
+        print(f"[{n}/{len(symbols)}] {symbol}: {len(h1):,} H1 bars; evaluating completed 4H decisions...", flush=True)
         result = evaluate(symbol, h1)
         results.append(asdict(result))
         print(
