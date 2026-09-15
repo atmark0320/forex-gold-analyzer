@@ -83,3 +83,5 @@ jobs:
           name: strategy-validation-results
           path: backtest_results.json
           retention-days: 14
+
+# Manual validation trigger commit.
