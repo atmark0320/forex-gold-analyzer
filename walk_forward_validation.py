@@ -1,9 +1,10 @@
 """Rolling multi-window out-of-sample validation.
 
-Uses the existing deterministic backtest and test-only candidate overlays.
-Seven 180-day windows, spaced 90 days apart, are evaluated from the same
-730-day dataset. This is intended to detect candidates that only work on one
-recent OOS window.
+Uses the existing deterministic backtest and selected test-only candidate
+variants. Seven 180-day windows, spaced 90 days apart, are evaluated from the
+same 730-day dataset. The reduced candidate set keeps the validation within
+GitHub Actions limits while preserving the baseline and the structural
+filters that showed the most useful signal in the prior OOS screen.
 """
 from __future__ import annotations
 
@@ -19,8 +20,23 @@ WINDOW_DAYS = 180
 STEP_DAYS = 90
 WINDOWS = 7
 
+# Keep the rolling test focused on the candidates that materially changed
+# trade selection in the previous OOS screen.
+VARIANTS = (
+    "baseline",
+    "adx25_gate",
+    "adx25_faster_target",
+    "full_alignment_adx25",
+    "adx25_rising",
+    "adx25_rising_faster_target",
+)
+
 
 def main() -> None:
+    missing = [name for name in VARIANTS if name not in CANDIDATES]
+    if missing:
+        raise RuntimeError(f"Unknown rolling variants: {missing}")
+
     all_rows = []
     for symbol in DEFAULT_SYMBOLS:
         print(f"Loading {symbol}...", flush=True)
@@ -34,7 +50,8 @@ def main() -> None:
                 f"{window_start.isoformat()} -> {window_end.isoformat()}",
                 flush=True,
             )
-            for name, cfg in CANDIDATES.items():
+            for name in VARIANTS:
+                cfg = CANDIDATES[name]
                 result = evaluate_candidate(
                     symbol,
                     h1,
@@ -65,7 +82,7 @@ def main() -> None:
     )
 
     # Stability summary: aggregate R and trade count by symbol/variant, and
-    # count how many rolling windows are profitable. Do not rank by one window.
+    # count profitable windows. No ranking by a single window is used.
     summary = []
     frame = pd.DataFrame(all_rows)
     for (symbol, variant), group in frame.groupby(["symbol", "variant"], sort=False):
@@ -81,6 +98,7 @@ def main() -> None:
             "best_window_r": round(float(group["total_r"].max()), 3),
             "total_trades": int(group["trades"].sum()),
         })
+
     Path("walk_forward_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
