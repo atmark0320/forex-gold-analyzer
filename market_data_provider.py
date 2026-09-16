@@ -23,6 +23,10 @@ YFINANCE_SYMBOLS = {
 # a long historical request. This matters especially for XAUUSD gap recovery.
 DOWNLOAD_CHUNK_DAYS = 30
 REFRESH_DAYS = int(os.environ.get("FOREX_DATA_REFRESH_DAYS", "14"))
+# A backtest may use a cached tail that is slightly behind wall-clock time when
+# the upstream feed is temporarily unavailable. Keep this bounded so a stale
+# cache can never silently replace materially old data.
+ALLOW_STALE_TAIL_HOURS = float(os.environ.get("FOREX_ALLOW_STALE_TAIL_HOURS", "0"))
 MAX_DOWNLOAD_ATTEMPTS = 5
 CACHE_DIR = Path(os.environ.get("FOREX_DATA_CACHE_DIR", ".cache/market_data"))
 # Use a fresh artifact namespace so a previously cached empty/corrupt artifact
@@ -189,11 +193,19 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
         cache_max = cached.index.max()
         pieces = [cached]
         if cache_max < refresh_start_ts:
-            gap_start = (cache_max + pd.Timedelta(hours=1)).to_pydatetime()
-            print(f"INFO {key}: cache tail is stale ({cache_max.isoformat()}); filling through {refresh_start_ts.isoformat()}", flush=True)
-            gap = _download_range(key, instrument, gap_start, refresh_start)
-            if not gap.empty:
-                pieces.append(gap)
+            tail_age = end_ts - cache_max
+            if ALLOW_STALE_TAIL_HOURS > 0 and tail_age <= pd.Timedelta(hours=ALLOW_STALE_TAIL_HOURS):
+                print(
+                    f"INFO {key}: upstream tail unavailable; using cached completed bars through "
+                    f"{cache_max.isoformat()} (tail age {tail_age})",
+                    flush=True,
+                )
+            else:
+                gap_start = (cache_max + pd.Timedelta(hours=1)).to_pydatetime()
+                print(f"INFO {key}: cache tail is stale ({cache_max.isoformat()}); filling through {refresh_start_ts.isoformat()}", flush=True)
+                gap = _download_range(key, instrument, gap_start, refresh_start)
+                if not gap.empty:
+                    pieces.append(gap)
         if REFRESH_DAYS > 0 and refresh_start < end:
             fresh = _download_with_fallback(key, instrument, refresh_start, end)
             if not fresh.empty:
