@@ -13,7 +13,7 @@ from pathlib import Path
 
 import backtest_strategy
 from backtest_strategy import DEFAULT_SYMBOLS, evaluate, load_data
-from technical_engine import StrategyConfig, TradePlan
+from technical_engine import StrategyConfig
 
 BASE = StrategyConfig()
 CANDIDATES = {
@@ -33,6 +33,8 @@ CANDIDATES = {
     "full_alignment": BASE,
     "full_alignment_faster_target": replace(BASE, target1_r=1.25, target2_r=2.0),
     "full_alignment_adx25": BASE,
+    "adx25_rising": BASE,
+    "adx25_rising_faster_target": replace(BASE, target1_r=1.25, target2_r=2.0),
 }
 
 ADX_GATES = {
@@ -40,12 +42,19 @@ ADX_GATES = {
     "adx22_gate": 22.0,
     "adx25_faster_target": 25.0,
     "full_alignment_adx25": 25.0,
+    "adx25_rising": 25.0,
+    "adx25_rising_faster_target": 25.0,
 }
 
 FULL_ALIGNMENT = {
     "full_alignment",
     "full_alignment_faster_target",
     "full_alignment_adx25",
+}
+
+RISING_ADX = {
+    "adx25_rising",
+    "adx25_rising_faster_target",
 }
 
 
@@ -56,15 +65,22 @@ def oos_days() -> int:
         return 180
 
 
-def evaluate_candidate(symbol, h1, cfg, adx_gate=None, full_alignment=False, **kwargs):
+def evaluate_candidate(symbol, h1, cfg, adx_gate=None, full_alignment=False, rising_adx=False, **kwargs):
     """Run a test-only overlay without changing production strategy logic."""
-    if adx_gate is None and not full_alignment:
+    if adx_gate is None and not full_alignment and not rising_adx:
         return evaluate(symbol, h1, cfg=cfg, **kwargs)
 
-    original = backtest_strategy._prepared_plan
+    original_plan = backtest_strategy._prepared_plan
+    original_snapshot = backtest_strategy._snapshot
+
+    def snapshot_with_previous_adx(ind, dow, pos):
+        snapshot = original_snapshot(ind, dow, pos)
+        previous = float(ind["adx"].iloc[pos - 1]) if pos > 0 and __import__("pandas").notna(ind["adx"].iloc[pos - 1]) else snapshot["adx"]
+        snapshot["adx_prev"] = previous
+        return snapshot
 
     def gated_plan(daily, h4, h1_snapshot, row, candidate_cfg):
-        plan = original(daily, h4, h1_snapshot, row, candidate_cfg)
+        plan = original_plan(daily, h4, h1_snapshot, row, candidate_cfg)
         if full_alignment:
             aligned = daily["dow_trend"] == h4["dow_trend"] == h1_snapshot["dow_trend"]
             if not aligned or daily["dow_trend"] not in {"up", "down"}:
@@ -85,13 +101,24 @@ def evaluate_candidate(symbol, h1, cfg, adx_gate=None, full_alignment=False, **k
                 reasons=tuple(list(plan.reasons) + [f"4H ADX {float(h4['adx']):.2f} < {adx_gate:.0f} のため見送り"]),
                 invalidation=f"4H ADXが{adx_gate:.0f}以上になるまで見送り",
             )
+        if rising_adx and float(h4["adx"]) <= float(h4.get("adx_prev", h4["adx"])):
+            return replace(
+                plan,
+                direction="wait", confidence="low", entry_type="wait",
+                entry_price=None, stop_price=None, target1=None, target2=None,
+                risk_per_unit=None, reward_r1=None, reward_r2=None,
+                reasons=tuple(list(plan.reasons) + [f"4H ADXが上昇していない ({float(h4['adx']):.2f} <= 前4H {float(h4.get('adx_prev', h4['adx'])):.2f})ため見送り"]),
+                invalidation="4H ADXが前4H足より上昇するまで見送り",
+            )
         return plan
 
+    backtest_strategy._snapshot = snapshot_with_previous_adx
     backtest_strategy._prepared_plan = gated_plan
     try:
         return evaluate(symbol, h1, cfg=cfg, **kwargs)
     finally:
-        backtest_strategy._prepared_plan = original
+        backtest_strategy._prepared_plan = original_plan
+        backtest_strategy._snapshot = original_snapshot
 
 
 def main() -> None:
@@ -108,6 +135,7 @@ def main() -> None:
                 symbol, h1, cfg=cfg,
                 adx_gate=ADX_GATES.get(name),
                 full_alignment=name in FULL_ALIGNMENT,
+                rising_adx=name in RISING_ADX,
                 trade_start=start,
                 trade_end=end + __import__("pandas").Timedelta(hours=1),
             )
@@ -118,6 +146,7 @@ def main() -> None:
                 "oos_days": days,
                 "adx_gate": ADX_GATES.get(name),
                 "full_alignment": name in FULL_ALIGNMENT,
+                "rising_adx": name in RISING_ADX,
             })
             output.append(row)
             print(
