@@ -1,8 +1,9 @@
 """Fast deterministic backtest for the Dow-first strategy.
 
-Indicators and confirmed Dow pivots are computed once per timeframe. The
-backtest then evaluates only completed 4H decision points, avoiding repeated
-full-history indicator/pivot recalculation at every decision.
+The backtest uses only completed 4H candles. A signal is calculated from the
+last H1 candle inside that completed 4H block, and execution can begin only on
+the following H1 candle. This prevents accidental use of a still-forming 4H
+candle or future H1 data.
 """
 from __future__ import annotations
 import json
@@ -48,7 +49,6 @@ def _trade_result(direction: str, future: pd.DataFrame, entry: float, stop: floa
     return None
 
 def _dow_snapshots(df: pd.DataFrame, cfg: StrategyConfig) -> list[dict]:
-    """Compute the same confirmed-pivot Dow state as technical_engine, in O(N)."""
     left, right = cfg.pivot_left, cfg.pivot_right
     highs: list[tuple[pd.Timestamp,float]] = []; lows: list[tuple[pd.Timestamp,float]] = []
     hi, lo, idx = df["High"].to_numpy(float), df["Low"].to_numpy(float), df.index
@@ -59,25 +59,21 @@ def _dow_snapshots(df: pd.DataFrame, cfg: StrategyConfig) -> list[dict]:
             hw = hi[c-left:c+right+1]; lw = lo[c-left:c+right+1]
             if hi[c] == np.max(hw) and hi[c] > np.max(np.delete(hw,left)): highs.append((idx[c+right],float(hi[c])))
             if lo[c] == np.min(lw) and lo[c] < np.min(np.delete(lw,left)): lows.append((idx[c+right],float(lo[c])))
-        hv = [v for _,v in highs]; lv = [v for _,v in lows]; trend = "transition"
+        hv=[v for _,v in highs]; lv=[v for _,v in lows]; trend="transition"
         if len(hv)>=2 and len(lv)>=2:
             if hv[-1]>hv[-2] and lv[-1]>lv[-2]: trend="up"
             elif hv[-1]<hv[-2] and lv[-1]<lv[-2]: trend="down"
             else: trend="range"
         elif len(hv)>=2 and hv[-1]>hv[-2]: trend="transition"
         elif len(lv)>=2 and lv[-1]<lv[-2]: trend="transition"
-        lh = hv[-1] if hv else None; ll = lv[-1] if lv else None; close=float(df["Close"].iloc[i])
-        br = "up" if lh is not None and close>lh else ("down" if ll is not None and close<ll else None)
+        close=float(df["Close"].iloc[i]); lh=hv[-1] if hv else None; ll=lv[-1] if lv else None
+        br="up" if lh is not None and close>lh else ("down" if ll is not None and close<ll else None)
         out.append({"trend":trend,"dow_trend":trend,"dow_breakout":br,"last_swing_high":lh,"last_swing_low":ll})
     return out
 
 def _snapshot(ind: pd.DataFrame, dow: dict, pos: int) -> dict:
     r=ind.iloc[pos]
-    return {"trend":dow["trend"],"dow_trend":dow["dow_trend"],"dow_breakout":dow["dow_breakout"],
-            "last_swing_high":dow["last_swing_high"],"last_swing_low":dow["last_swing_low"],"close":float(r["Close"]),
-            "ema20":float(r["ema20"]),"ema50":float(r["ema50"]),"ema200":float(r["ema200"]),"rsi":float(r["rsi"]),
-            "adx":float(r["adx"]) if pd.notna(r["adx"]) else 0.0,"atr":float(r["atr"]) if pd.notna(r["atr"]) else 0.0,
-            "macd_hist":float(r["macd_hist"]) if pd.notna(r["macd_hist"]) else 0.0}
+    return {"trend":dow["trend"],"dow_trend":dow["dow_trend"],"dow_breakout":dow["dow_breakout"],"last_swing_high":dow["last_swing_high"],"last_swing_low":dow["last_swing_low"],"close":float(r["Close"]),"ema20":float(r["ema20"]),"ema50":float(r["ema50"]),"ema200":float(r["ema200"]),"rsi":float(r["rsi"]),"adx":float(r["adx"]) if pd.notna(r["adx"]) else 0.0,"atr":float(r["atr"]) if pd.notna(r["atr"]) else 0.0,"macd_hist":float(r["macd_hist"]) if pd.notna(r["macd_hist"]) else 0.0}
 
 def _merge(daily:dict,h4:dict,h1:dict)->tuple[int,list[str],str]:
     score=0; reasons=[]; regs=[daily["dow_trend"],h4["dow_trend"],h1["dow_trend"]]; regime="range"
@@ -128,16 +124,23 @@ def evaluate(symbol,h1,cfg=StrategyConfig(),max_hold_bars=48,entry_valid_bars=3)
     h1=h1.sort_index().copy(); daily_raw,h4_raw=build_timeframes(h1)
     h1i,h4i,dailyi=add_indicators(h1,cfg),add_indicators(h4_raw,cfg),add_indicators(daily_raw,cfg)
     h1d,h4d,dd=_dow_snapshots(h1i,cfg),_dow_snapshots(h4i,cfg),_dow_snapshots(dailyi,cfg)
-    h4pos={ts:i for i,ts in enumerate(h4i.index)}; dts=dailyi.index.to_numpy(); decisions=[i for i,ts in enumerate(h1i.index) if ts in h4pos and i>=80]
+    h4pos={ts:i for i,ts in enumerate(h4i.index)}; dts=dailyi.index.to_numpy(); decisions=[]
+    for i,ts in enumerate(h1i.index):
+        # A 4H candle beginning at ts is complete only after its fourth H1
+        # candle closes. Therefore the decision row is ts+3h.
+        block_start=ts-pd.Timedelta(hours=3)
+        hp=h4pos.get(block_start)
+        if hp is not None and i>=80: decisions.append((i,hp))
     outcomes=[]; equity=peak=maxdd=0.0; blocked=-1; total=len(decisions)
-    for n,i in enumerate(decisions,1):
-        if i<blocked: continue
-        ts=h1i.index[i]; hp=h4pos[ts]
+    for n,(i,hp) in enumerate(decisions,1):
+        if i<blocked or hp<29: continue
+        ts=h1i.index[i]
         dp=int(np.searchsorted(dts,np.datetime64(ts),side="right")-1)
-        if hp<29 or dp<59: continue
+        if dp<59: continue
         plan=_prepared_plan(_snapshot(dailyi,dd[dp],dp),_snapshot(h4i,h4d[hp],hp),_snapshot(h1i,h1d[i],i),h1i.iloc[i],cfg)
         if plan.direction=="wait" or plan.entry_price is None or plan.stop_price is None or plan.target1 is None: continue
-        entry,stop,target=float(plan.entry_price),float(plan.stop_price),float(plan.target1); trigger=None
+        entry,stop,target=float(plan.entry_price),float(plan.stop_price),float(plan.target1)
+        trigger=None
         for j in range(i+1,min(i+1+entry_valid_bars,len(h1i))):
             b=h1i.iloc[j]
             if plan.direction=="buy" and float(b["High"])>=entry: trigger=j; break
@@ -159,6 +162,8 @@ def main():
     for n,symbol in enumerate(symbols,1):
         t=time.monotonic(); print(f"[{n}/{len(symbols)}] loading {symbol}...",flush=True); h1=load_data(symbol)
         print(f"[{n}/{len(symbols)}] {symbol}: {len(h1):,} H1 bars; evaluating completed 4H decisions...",flush=True); r=evaluate(symbol,h1); results.append(asdict(r))
-        print(f"[{n}/{len(symbols)}] {symbol}: trades={r.trades}, total_R={r.total_r}, expectancy={r.expectancy_r}, elapsed={time.monotonic()-t:.1f}s",flush=True)
-    payload=json.dumps(results,ensure_ascii=False,indent=2); open("backtest_results.json","w",encoding="utf-8").write(payload); print(payload,flush=True); print(f"BACKTEST complete: elapsed={time.monotonic()-started:.1f}s",flush=True)
+        print(f"[{n}/{len(symbols)}] {symbol}: {r.trades} trades, PF={r.profit_factor}, Expectancy={r.expectancy_r}R, elapsed={time.monotonic()-t:.1f}s",flush=True)
+    with open("backtest_results.json","w",encoding="utf-8") as f: json.dump(results,f,ensure_ascii=False,indent=2)
+    print(f"BACKTEST complete in {time.monotonic()-started:.1f}s",flush=True)
+
 if __name__=="__main__": main()
