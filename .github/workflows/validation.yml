@@ -112,7 +112,7 @@ jobs:
           print("OOS_RESULT_VALID", data)
           PY
 
-      - name: 戦略候補OOS比較（16条件×全7銘柄）
+      - name: 戦略候補OOS比較（18条件×全7銘柄）
         timeout-minutes: 35
         shell: bash
         run: |
@@ -128,14 +128,15 @@ jobs:
               "baseline", "stricter_confirmation", "wider_target", "faster_target", "wider_stop", "larger_entry_buffer",
               "stricter_faster_target", "stricter_larger_buffer", "faster_larger_buffer", "stricter_faster_larger_buffer",
               "adx25_gate", "adx22_gate", "adx25_faster_target", "full_alignment", "full_alignment_faster_target", "full_alignment_adx25",
+              "adx25_rising", "adx25_rising_faster_target",
           ]
-          assert len(data) == 112, len(data)
+          assert len(data) == 126, len(data)
           assert sorted({row["symbol"] for row in data}) == sorted(expected_symbols)
           assert sorted({row["variant"] for row in data}) == sorted(expected_variants)
           for row in data:
               assert row["evaluation"] == "out_of_sample", row
               assert row["trades"] == row["wins"] + row["losses"], row
-          print("CANDIDATE_RESULT_VALID rows=112")
+          print("CANDIDATE_RESULT_VALID rows=126")
           PY
 
       - name: 市場データキャッシュを保存
