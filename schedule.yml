@@ -41,6 +41,9 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: python forex_gold_analyzer.py
 
+      - name: 本番戦略の劣化監視を実行
+        run: python production_monitor.py
+
       # 実行タイミングが重なるとリモートのmainが先に進んでいて
       # 単純なgit pushが失敗することがあるため、pull --rebaseしてから
       # push、失敗したら少し待って最大5回までリトライする
