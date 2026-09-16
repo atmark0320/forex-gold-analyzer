@@ -31,6 +31,7 @@ jobs:
     timeout-minutes: 60
     env:
       FOREX_DATA_REFRESH_DAYS: "0"
+      FOREX_ALLOW_STALE_TAIL_HOURS: "48"
       DUKASCOPY_BATCH_SIZE: "2"
       DUKASCOPY_BATCH_PAUSE_MS: "5000"
       DUKASCOPY_RETRY_PAUSE_MS: "10000"
