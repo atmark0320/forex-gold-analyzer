@@ -142,6 +142,22 @@ def _save_cached(key: str, df: pd.DataFrame) -> None:
     df.to_csv(_cache_path(key), compression="gzip", index_label="timestamp")
 
 
+def _download_range(symbol: str, instrument: str, start: datetime, end: datetime) -> pd.DataFrame:
+    chunks: list[pd.DataFrame] = []
+    cursor = start
+    while cursor < end:
+        chunk_end = min(cursor + timedelta(days=DOWNLOAD_CHUNK_DAYS), end)
+        chunk = _download_with_fallback(symbol, instrument, cursor, chunk_end)
+        if not chunk.empty:
+            chunks.append(chunk)
+            combined = pd.concat(chunks).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")]
+            _save_cached(symbol, combined)
+        cursor = chunk_end
+        if cursor < end:
+            time.sleep(5)
+    return pd.concat(chunks).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")] if chunks else pd.DataFrame()
+
+
 def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.DataFrame:
     key = symbol.upper().replace("/", "")
     instrument = SYMBOLS.get(key)
@@ -153,34 +169,35 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     end_ts = pd.Timestamp(end).tz_convert("UTC")
     cached = _load_cached(key)
 
-    # A market's first available H1 bar can legitimately be one or a few hours
-    # after the calendar start (weekend/session boundary). Treat a cache as
-    # warm enough when it misses the requested start by at most 24 hours rather
-    # than forcing another full Dukascopy download. This is especially
-    # important for XAUUSD, where a retry can hit the provider's rate limit.
     cache_start_tolerance = pd.Timedelta(hours=24)
+    refresh_start = max(start, end - timedelta(days=REFRESH_DAYS)) if REFRESH_DAYS > 0 else end
+    refresh_start_ts = pd.Timestamp(refresh_start).tz_convert("UTC")
+
     if cached is not None and not cached.empty and cached.index.min() <= start_ts + cache_start_tolerance:
+        cached = cached.sort_index()
+        cache_max = cached.index.max()
+        pieces = [cached]
+
+        # Do not assume a cache is current merely because its oldest bar covers
+        # the requested warm-up. If the newest cached bar is months behind the
+        # refresh boundary, fill the entire missing tail first. This prevents
+        # silent gaps such as an XAUUSD cache ending in May while the run is in
+        # September, which would invalidate the OOS date range.
+        if cache_max < refresh_start_ts:
+            gap_start = (cache_max + pd.Timedelta(hours=1)).to_pydatetime()
+            print(f"INFO {key}: cache tail is stale ({cache_max.isoformat()}); filling through {refresh_start_ts.isoformat()}", flush=True)
+            gap = _download_range(key, instrument, gap_start, refresh_start)
+            if not gap.empty:
+                pieces.append(gap)
+
         if REFRESH_DAYS > 0:
-            refresh_start = max(start, end - timedelta(days=REFRESH_DAYS))
-            refresh_start_ts = pd.Timestamp(refresh_start).tz_convert("UTC")
             fresh = _download_with_fallback(key, instrument, refresh_start, end)
-            df = pd.concat([cached.loc[cached.index < refresh_start_ts], fresh])
-        else:
-            df = cached
+            if not fresh.empty:
+                pieces.append(fresh)
+
+        df = pd.concat(pieces).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")]
     else:
-        chunks: list[pd.DataFrame] = []
-        cursor = start
-        while cursor < end:
-            chunk_end = min(cursor + timedelta(days=DOWNLOAD_CHUNK_DAYS), end)
-            chunk = _download_with_fallback(key, instrument, cursor, chunk_end)
-            if not chunk.empty:
-                chunks.append(chunk)
-                combined = pd.concat(chunks).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")]
-                _save_cached(key, combined)
-            cursor = chunk_end
-            if cursor < end:
-                time.sleep(5)
-        df = pd.concat(chunks) if chunks else pd.DataFrame()
+        df = _download_range(key, instrument, start, end)
 
     df = df.sort_index().loc[~df.index.duplicated(keep="last")]
     df = _drop_forming_h1(df, end)
