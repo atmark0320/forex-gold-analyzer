@@ -257,16 +257,19 @@ def evaluate(symbol, h1, cfg=StrategyConfig(), max_hold_bars=48, entry_valid_bar
     return BacktestResult(symbol, "Dukascopy spot BID 1H", trades, len(wins), len(losses), round(100 * len(wins) / trades, 2) if trades else 0.0, round(sum(outcomes), 3), round(sum(outcomes) / trades, 4) if trades else 0.0, round(gp / gl, 3) if gl else (999.0 if gp else 0.0), round(gp / len(wins), 4) if wins else 0.0, round(sum(losses) / len(losses), 4) if losses else 0.0, round(maxdd, 3), maxstreak)
 
 
-def main():
-    symbols = selected_symbols(); days = _env_int("BACKTEST_DAYS", 730); started = time.monotonic(); results = []
-    print(f"BACKTEST start: days={days}, symbols={','.join(symbols)}", flush=True)
-    for n, symbol in enumerate(symbols, 1):
-        t = time.monotonic(); print(f"[{n}/{len(symbols)}] loading {symbol}...", flush=True); h1 = load_data(symbol)
-        print(f"[{n}/{len(symbols)}] {symbol}: {len(h1):,} H1 bars; evaluating completed 4H decisions...", flush=True)
-        r = evaluate(symbol, h1); results.append(asdict(r))
-        print(f"[{n}/{len(symbols)}] {symbol}: trades={r.trades}, win={r.win_rate_pct}%, totalR={r.total_r}, PF={r.profit_factor}, elapsed={time.monotonic()-t:.1f}s", flush=True)
-    with open("backtest_results.json", "w", encoding="utf-8") as f: json.dump(results, f, ensure_ascii=False, indent=2)
-    print(f"BACKTEST complete: {len(results)} symbols in {time.monotonic()-started:.1f}s", flush=True)
+def main() -> None:
+    days = _env_int("BACKTEST_DAYS", 730)
+    symbols = selected_symbols()
+    output = []
+    for symbol in symbols:
+        print(f"Loading {symbol} ({days}d)...", flush=True)
+        h1 = fetch_ohlc(symbol, days=days)
+        result = evaluate(symbol, h1)
+        output.append(asdict(result))
+        print(asdict(result), flush=True)
+    with open("backtest_results.json", "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+    print(json.dumps(output, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
