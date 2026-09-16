@@ -12,22 +12,12 @@ import yfinance as yf
 
 DUKASCOPY_VERSION = "1.50.0"
 SYMBOLS = {
-    "USDJPY": "usdjpy",
-    "XAUUSD": "xauusd",
-    "EURUSD": "eurusd",
-    "GBPUSD": "gbpusd",
-    "AUDUSD": "audusd",
-    "USDCAD": "usdcad",
-    "USDCHF": "usdchf",
+    "USDJPY": "usdjpy", "XAUUSD": "xauusd", "EURUSD": "eurusd",
+    "GBPUSD": "gbpusd", "AUDUSD": "audusd", "USDCAD": "usdcad", "USDCHF": "usdchf",
 }
 YFINANCE_SYMBOLS = {
-    "USDJPY": "JPY=X",
-    "XAUUSD": "XAUUSD=X",
-    "EURUSD": "EURUSD=X",
-    "GBPUSD": "GBPUSD=X",
-    "AUDUSD": "AUDUSD=X",
-    "USDCAD": "CAD=X",
-    "USDCHF": "CHF=X",
+    "USDJPY": "JPY=X", "XAUUSD": "XAUUSD=X", "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X", "AUDUSD": "AUDUSD=X", "USDCAD": "CAD=X", "USDCHF": "CHF=X",
 }
 DOWNLOAD_CHUNK_DAYS = 120
 REFRESH_DAYS = int(os.environ.get("FOREX_DATA_REFRESH_DAYS", "14"))
@@ -52,14 +42,10 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
                 out_dir = Path(tmp)
                 file_name = f"{instrument}_{start:%Y%m%d}_{end:%Y%m%d}.csv"
                 cmd = [
-                    "npx", "--yes", f"dukascopy-node@{DUKASCOPY_VERSION}",
-                    "-i", instrument,
-                    "-from", start.strftime("%Y-%m-%d"),
-                    "-to", end.strftime("%Y-%m-%d"),
-                    "-t", "h1", "-p", "bid", "-f", "csv",
-                    "-dir", str(out_dir), "-fn", file_name,
-                    "-bs", str(BATCH_SIZE), "-bp", str(BATCH_PAUSE_MS),
-                    "-ch", "-chpath", str(DUKASCOPY_CACHE_DIR),
+                    "npx", "--yes", f"dukascopy-node@{DUKASCOPY_VERSION}", "-i", instrument,
+                    "-from", start.strftime("%Y-%m-%d"), "-to", end.strftime("%Y-%m-%d"),
+                    "-t", "h1", "-p", "bid", "-f", "csv", "-dir", str(out_dir), "-fn", file_name,
+                    "-bs", str(BATCH_SIZE), "-bp", str(BATCH_PAUSE_MS), "-ch", "-chpath", str(DUKASCOPY_CACHE_DIR),
                     "-r", "2", "-rp", str(RETRY_PAUSE_MS), "-re", "-s",
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
@@ -84,8 +70,7 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
             df = df.set_index("timestamp").sort_index()
             df = df.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
             keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
-            df = df[keep]
-            df = df.loc[~df.index.duplicated(keep="last")]
+            df = df[keep].loc[~df.index.duplicated(keep="last")]
             return df.loc[(df.index >= start) & (df.index <= end)]
         except subprocess.TimeoutExpired as exc:
             last_error = f"Dukascopy download timed out after 900s: {exc}"
@@ -96,23 +81,15 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
 
 
 def _run_yfinance(symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
-    """Fallback market data source when Dukascopy is temporarily rate-limited."""
     ticker = YFINANCE_SYMBOLS[symbol]
     df = yf.download(
-        ticker,
-        start=start.astimezone(timezone.utc),
-        end=end.astimezone(timezone.utc),
-        interval="1h",
-        auto_adjust=False,
-        progress=False,
-        threads=False,
+        ticker, start=start.astimezone(timezone.utc), end=end.astimezone(timezone.utc),
+        interval="1h", auto_adjust=False, progress=False, threads=False,
     )
     if df is None or df.empty:
         raise RuntimeError(f"Yahoo Finance returned no hourly data for {ticker}")
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
-    rename = {"Open": "Open", "High": "High", "Low": "Low", "Close": "Close", "Volume": "Volume"}
-    df = df.rename(columns=rename)
     required = ["Open", "High", "Low", "Close"]
     missing = [c for c in required if c not in df.columns]
     if missing:
@@ -121,21 +98,20 @@ def _run_yfinance(symbol: str, start: datetime, end: datetime) -> pd.DataFrame:
     keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
     df = df[keep].sort_index()
     df = df.loc[~df.index.duplicated(keep="last")]
-    return df.loc[(df.index >= pd.Timestamp(start).tz_convert("UTC")) & (df.index <= pd.Timestamp(end).tz_convert("UTC"))]
+    start_ts = pd.Timestamp(start).tz_convert("UTC")
+    end_ts = pd.Timestamp(end).tz_convert("UTC")
+    return df.loc[(df.index >= start_ts) & (df.index < end_ts)]
 
 
 def _download_with_fallback(symbol: str, instrument: str, start: datetime, end: datetime) -> pd.DataFrame:
     try:
         return _run_dukascopy(instrument, start, end)
     except Exception as dukascopy_error:
-        print(f"WARNING {symbol}: Dukascopy failed; using Yahoo Finance spot/FX fallback: {dukascopy_error}", flush=True)
+        print(f"WARNING {symbol}: Dukascopy failed; using Yahoo Finance fallback: {dukascopy_error}", flush=True)
         try:
             return _run_yfinance(symbol, start, end)
         except Exception as fallback_error:
-            raise RuntimeError(
-                f"{symbol}: Dukascopy and Yahoo Finance fallback both failed. "
-                f"Dukascopy={dukascopy_error}; Yahoo={fallback_error}"
-            ) from fallback_error
+            raise RuntimeError(f"{symbol}: both market-data sources failed. Dukascopy={dukascopy_error}; Yahoo={fallback_error}") from fallback_error
 
 
 def _drop_forming_h1(df: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
@@ -162,12 +138,11 @@ def _load_cached(key: str) -> pd.DataFrame | None:
 
 
 def _save_cached(key: str, df: pd.DataFrame) -> None:
-    path = _cache_path(key)
-    df.to_csv(path, compression="gzip", index_label="timestamp")
+    _cache_path(key).parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(_cache_path(key), compression="gzip", index_label="timestamp")
 
 
 def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.DataFrame:
-    """Fetch completed hourly candles, preferring Dukascopy and falling back to Yahoo Finance when rate-limited."""
     key = symbol.upper().replace("/", "")
     instrument = SYMBOLS.get(key)
     if instrument is None:
@@ -192,19 +167,28 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
         while cursor < end:
             chunk_end = min(cursor + timedelta(days=DOWNLOAD_CHUNK_DAYS), end)
             chunk = _download_with_fallback(key, instrument, cursor, chunk_end)
-            chunks.append(chunk)
-            combined = pd.concat(chunks).sort_index()
-            combined = combined.loc[~combined.index.duplicated(keep="last")]
-            _save_cached(key, combined)
+            if not chunk.empty:
+                chunks.append(chunk)
+                combined = pd.concat(chunks).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")]
+                _save_cached(key, combined)
             cursor = chunk_end
             if cursor < end:
                 time.sleep(5)
-        df = pd.concat(chunks)
+        df = pd.concat(chunks) if chunks else pd.DataFrame()
 
-    df = df.sort_index()
-    df = df.loc[~df.index.duplicated(keep="last")]
+    df = df.sort_index().loc[~df.index.duplicated(keep="last")]
     df = _drop_forming_h1(df, end)
     df = df.loc[(df.index >= start_ts) & (df.index < end_ts)]
+    if len(df) < 300:
+        # A stale/incomplete cache must never be accepted as a successful backtest input.
+        # Force a clean range download once, then validate the result again.
+        print(f"WARNING {key}: cache produced only {len(df)} hourly bars; forcing clean refresh", flush=True)
+        fresh = _download_with_fallback(key, instrument, start, end)
+        fresh = _drop_forming_h1(fresh.sort_index(), end)
+        fresh = fresh.loc[(fresh.index >= start_ts) & (fresh.index < end_ts)]
+        if len(fresh) >= 300:
+            df = fresh
+            _save_cached(key, df)
     if len(df) < 300:
         raise RuntimeError(f"{symbol}: insufficient hourly data ({len(df)} bars)")
     _save_cached(key, df)
@@ -212,19 +196,16 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
 
 
 def build_timeframes(h1: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    x = h1.copy().sort_index()
-    x = x.loc[~x.index.duplicated(keep="last")]
+    x = h1.copy().sort_index().loc[lambda z: ~z.index.duplicated(keep="last")]
     agg = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
     if "Volume" in x.columns:
         agg["Volume"] = "sum"
     grouped = x.resample("4h", origin="epoch", label="left", closed="left")
     counts = grouped["Close"].count()
-    h4 = grouped.agg(agg)
-    h4 = h4.loc[counts == 4].dropna(subset=["Open", "High", "Low", "Close"])
+    h4 = grouped.agg(agg).loc[counts == 4].dropna(subset=["Open", "High", "Low", "Close"])
     daily_grouped = x.resample("1D", label="left", closed="left")
     daily_counts = daily_grouped["Close"].count()
-    daily = daily_grouped.agg(agg)
-    daily = daily.loc[daily_counts >= 18].dropna(subset=["Open", "High", "Low", "Close"])
+    daily = daily_grouped.agg(agg).loc[daily_counts >= 18].dropna(subset=["Open", "High", "Low", "Close"])
     return daily, h4
 
 
