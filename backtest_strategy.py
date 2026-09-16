@@ -2,11 +2,6 @@
 
 Signals use only completed 4H candles. The decision is taken from the last
 H1 candle in that completed block; execution starts on the following H1 bar.
-
-The evaluator supports an optional trade_start/trade_end window. Indicators
-and Dow snapshots are still calculated from the full loaded history so the OOS
-period has proper warm-up data, while only decisions inside the requested
-window are counted.
 """
 from __future__ import annotations
 
@@ -199,7 +194,7 @@ def _prepared_plan(daily, h4, h1, row, cfg):
         entry = close - buf
         stops = [close + atr * cfg.stop_atr]
         if float(row["ema50"]) > entry: stops.append(float(row["ema50"]))
-        if h1["last_swing_high"] is not None and h1["last_swing_high"] > entry: stops.append(float(h1["last_swing_high"]))
+        if h1["last_swing_high"] is not None and h1["last_swing_high"] > entry: stops.append(float(row["last_swing_high"]))
         stop = max(stops); risk = stop - entry
         t1 = entry - risk * cfg.target1_r; t2 = entry - risk * cfg.target2_r
         inv = (f"1H終値が直近ダウ高値 {h1['last_swing_high']:.5f} を明確に上回る、または4Hダウ構造が上昇へ転換"
@@ -217,14 +212,7 @@ def _prepared_plan(daily, h4, h1, row, cfg):
                      reasons=tuple(reasons), invalidation=inv)
 
 
-def evaluate(symbol, h1, cfg=StrategyConfig(), max_hold_bars=48, entry_valid_bars=3,
-             trade_start=None, trade_end=None):
-    """Evaluate one symbol, optionally restricting scored decisions to a time window.
-
-    The full supplied history is used for indicator/Dow warm-up. This avoids
-    contaminating OOS evaluation with insufficient lookback while ensuring no
-    pre-OOS trade is allowed to block an OOS trade.
-    """
+def evaluate(symbol, h1, cfg=StrategyConfig(), max_hold_bars=48, entry_valid_bars=3, trade_start=None, trade_end=None):
     h1 = h1.sort_index().copy()
     daily_raw, h4_raw = build_timeframes(h1)
     h1i = add_indicators(h1, cfg); h4i = add_indicators(h4_raw, cfg); dailyi = add_indicators(daily_raw, cfg)
@@ -236,20 +224,16 @@ def evaluate(symbol, h1, cfg=StrategyConfig(), max_hold_bars=48, entry_valid_bar
         hp = h4pos.get(block_start)
         if hp is not None and i >= 80:
             decisions.append((i, hp))
-    if trade_start is not None:
-        trade_start = pd.Timestamp(trade_start)
-        if trade_start.tzinfo is None: trade_start = trade_start.tz_localize("UTC")
-        else: trade_start = trade_start.tz_convert("UTC")
-    if trade_end is not None:
-        trade_end = pd.Timestamp(trade_end)
-        if trade_end.tzinfo is None: trade_end = trade_end.tz_localize("UTC")
-        else: trade_end = trade_end.tz_convert("UTC")
     outcomes = []; equity = peak = maxdd = 0.0; blocked = -1; total = len(decisions)
     dts = dailyi.index
+    trade_start = pd.Timestamp(trade_start).tz_convert("UTC") if trade_start is not None else None
+    trade_end = pd.Timestamp(trade_end).tz_convert("UTC") if trade_end is not None else None
     for n, (i, hp) in enumerate(decisions, 1):
         ts = h1i.index[i]
-        if trade_start is not None and ts < trade_start: continue
-        if trade_end is not None and ts >= trade_end: continue
+        if trade_start is not None and ts < trade_start:
+            continue
+        if trade_end is not None and ts >= trade_end:
+            continue
         if i < blocked or hp < 29: continue
         dp = int(dts.searchsorted(ts, side="right") - 1)
         if dp < 59: continue
@@ -266,16 +250,11 @@ def evaluate(symbol, h1, cfg=StrategyConfig(), max_hold_bars=48, entry_valid_bar
         if r is None: continue
         outcomes.append(float(r)); equity += float(r); peak = max(peak, equity); maxdd = max(maxdd, peak - equity); blocked = trigger + max_hold_bars
         if n % 250 == 0: print(f"    {symbol}: decisions {n:,}/{total:,}, trades {len(outcomes):,}", flush=True)
-    wins = [x for x in outcomes if x > 0]; losses = [x for x in outcomes if x < 0]; trades = len(outcomes)
-    gp = sum(wins); gl = abs(sum(losses)); streak = maxstreak = 0
+    wins = [x for x in outcomes if x > 0]; losses = [x for x in outcomes if x < 0]; trades = len(outcomes); gp = sum(wins); gl = abs(sum(losses)); streak = maxstreak = 0
     for x in outcomes:
         if x < 0: streak += 1; maxstreak = max(maxstreak, streak)
         else: streak = 0
-    return BacktestResult(symbol, "Dukascopy spot BID 1H", trades, len(wins), len(losses),
-                          round(100 * len(wins) / trades, 2) if trades else 0.0, round(sum(outcomes), 3),
-                          round(sum(outcomes) / trades, 4) if trades else 0.0, round(gp / gl, 3) if gl else (999.0 if gp else 0.0),
-                          round(gp / len(wins), 4) if wins else 0.0, round(sum(losses) / len(losses), 4) if losses else 0.0,
-                          round(maxdd, 3), maxstreak)
+    return BacktestResult(symbol, "Dukascopy spot BID 1H", trades, len(wins), len(losses), round(100 * len(wins) / trades, 2) if trades else 0.0, round(sum(outcomes), 3), round(sum(outcomes) / trades, 4) if trades else 0.0, round(gp / gl, 3) if gl else (999.0 if gp else 0.0), round(gp / len(wins), 4) if wins else 0.0, round(sum(losses) / len(losses), 4) if losses else 0.0, round(maxdd, 3), maxstreak)
 
 
 def main():
