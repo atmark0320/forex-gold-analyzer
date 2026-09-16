@@ -95,11 +95,9 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          p = Path("backtest_results.json")
-          data = json.loads(p.read_text(encoding="utf-8"))
+          data = json.loads(Path("backtest_results.json").read_text(encoding="utf-8"))
           expected = ["USDJPY", "XAUUSD", "EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF"]
-          symbols = [row["symbol"] for row in data]
-          assert symbols == expected, symbols
+          assert [row["symbol"] for row in data] == expected, data
           required = ["trades", "wins", "losses", "win_rate_pct", "total_r", "expectancy_r", "profit_factor", "max_drawdown_r", "max_consecutive_losses"]
           for row in data:
               assert all(k in row for k in required), row
@@ -128,8 +126,8 @@ jobs:
           print("OOS_RESULT_VALID", data)
           PY
 
-      - name: 戦略候補OOS比較（6条件×全7銘柄）
-        timeout-minutes: 20
+      - name: 戦略候補OOS比較（10条件×全7銘柄）
+        timeout-minutes: 30
         shell: bash
         run: |
           set -o pipefail
@@ -140,12 +138,14 @@ jobs:
           from pathlib import Path
           data = json.loads(Path("strategy_candidates_oos.json").read_text(encoding="utf-8"))
           expected = ["USDJPY", "XAUUSD", "EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF"]
-          assert len(data) == 42, len(data)
-          assert sorted({row["symbol"] for row in data}) == sorted(expected)
-          assert sorted({row["variant"] for row in data}) == sorted([
+          variants = [
               "baseline", "stricter_confirmation", "wider_target", "faster_target",
-              "wider_stop", "larger_entry_buffer"
-          ])
+              "wider_stop", "larger_entry_buffer", "stricter_faster_target",
+              "stricter_larger_buffer", "faster_larger_buffer", "stricter_faster_larger_buffer"
+          ]
+          assert len(data) == 70, len(data)
+          assert sorted({row["symbol"] for row in data}) == sorted(expected)
+          assert sorted({row["variant"] for row in data}) == sorted(variants)
           for row in data:
               assert row["evaluation"] == "out_of_sample", row
               assert row["trades"] == row["wins"] + row["losses"], row
