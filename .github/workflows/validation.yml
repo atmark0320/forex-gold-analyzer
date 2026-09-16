@@ -10,6 +10,8 @@ on:
       - "oos_validation.py"
       - "strategy_candidates.py"
       - "walk_forward_validation.py"
+      - "production_pair_validation.py"
+      - "strategy_profiles.py"
       - "strategy_runner.py"
       - "tests/**"
       - "requirements.txt"
@@ -164,6 +166,30 @@ jobs:
           print("WALK_FORWARD_RESULT_VALID rows=294 summaries=42")
           PY
 
+      - name: 本番候補のペア別ローリングOOS（USDJPY baseline / XAUUSD baseline vs ADX25高速TP）
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -o pipefail
+          python -u production_pair_validation.py | tee production_pair_validation.log
+          test -s production_pair_validation.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("production_pair_validation.json").read_text(encoding="utf-8"))
+          assert len(data["rows"]) == 21, len(data["rows"])
+          assert len(data["summary"]) == 3, len(data["summary"])
+          expected = {
+              ("USDJPY", "baseline"),
+              ("XAUUSD", "baseline"),
+              ("XAUUSD", "adx25_faster_target"),
+          }
+          assert {(r["symbol"], r["variant"]) for r in data["rows"]} == expected
+          for row in data["rows"]:
+              assert row["trades"] == row["wins"] + row["losses"], row
+          print("PRODUCTION_PAIR_RESULT_VALID rows=21 summaries=3")
+          PY
+
       - name: 市場データキャッシュを保存
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.4
         if: always()
@@ -186,3 +212,5 @@ jobs:
             walk_forward_results.json
             walk_forward_summary.json
             walk_forward.log
+            production_pair_validation.json
+            production_pair_validation.log
