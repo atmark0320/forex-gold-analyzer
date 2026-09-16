@@ -1,8 +1,9 @@
 """All-symbol strategy candidate screening on the same out-of-sample window.
 
 This module deliberately keeps the baseline and every candidate result. It does
-not select a winner automatically; the next promotion step is based on both
-IS and OOS evidence across all seven symbols.
+not select a winner automatically; promotion requires evidence across all seven
+symbols. ADX-gated variants are implemented here as test-only overlays so the
+production strategy is not changed before validation.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import os
 from dataclasses import asdict, replace
 from pathlib import Path
 
+import backtest_strategy
 from backtest_strategy import DEFAULT_SYMBOLS, evaluate, load_data
 from technical_engine import StrategyConfig
 
@@ -26,6 +28,15 @@ CANDIDATES = {
     "stricter_larger_buffer": replace(BASE, min_score=8, strong_score=10, entry_buffer_atr=0.15),
     "faster_larger_buffer": replace(BASE, target1_r=1.25, target2_r=2.0, entry_buffer_atr=0.15),
     "stricter_faster_larger_buffer": replace(BASE, min_score=8, strong_score=10, target1_r=1.25, target2_r=2.0, entry_buffer_atr=0.15),
+    "adx25_gate": BASE,
+    "adx22_gate": BASE,
+    "adx25_faster_target": replace(BASE, target1_r=1.25, target2_r=2.0),
+}
+
+ADX_GATES = {
+    "adx25_gate": 25.0,
+    "adx22_gate": 22.0,
+    "adx25_faster_target": 25.0,
 }
 
 
@@ -34,6 +45,40 @@ def oos_days() -> int:
         return max(30, int(os.environ.get("OOS_DAYS", "180")))
     except ValueError:
         return 180
+
+
+def evaluate_candidate(symbol, h1, cfg, adx_gate=None, **kwargs):
+    """Run a candidate; ADX gates are isolated test overlays, not production logic."""
+    if adx_gate is None:
+        return evaluate(symbol, h1, cfg=cfg, **kwargs)
+
+    original = backtest_strategy._prepared_plan
+
+    def gated_plan(daily, h4, h1_snapshot, row, candidate_cfg):
+        plan = original(daily, h4, h1_snapshot, row, candidate_cfg)
+        if float(h4["adx"]) < adx_gate:
+            return replace(
+                plan,
+                direction="wait",
+                confidence="low",
+                entry_type="wait",
+                entry_price=None,
+                stop_price=None,
+                target1=None,
+                target2=None,
+                risk_per_unit=None,
+                reward_r1=None,
+                reward_r2=None,
+                reasons=tuple(list(plan.reasons) + [f"4H ADX {float(h4['adx']):.2f} < {adx_gate:.0f} のため見送り"]),
+                invalidation=f"4H ADXが{adx_gate:.0f}以上になるまで見送り",
+            )
+        return plan
+
+    backtest_strategy._prepared_plan = gated_plan
+    try:
+        return evaluate(symbol, h1, cfg=cfg, **kwargs)
+    finally:
+        backtest_strategy._prepared_plan = original
 
 
 def main() -> None:
@@ -46,13 +91,21 @@ def main() -> None:
         end = h1.index.max()
         start = end - __import__("pandas").Timedelta(days=days)
         for name, cfg in CANDIDATES.items():
-            result = evaluate(
-                symbol, h1, cfg=cfg,
+            result = evaluate_candidate(
+                symbol,
+                h1,
+                cfg=cfg,
+                adx_gate=ADX_GATES.get(name),
                 trade_start=start,
                 trade_end=end + __import__("pandas").Timedelta(hours=1),
             )
             row = asdict(result)
-            row.update({"variant": name, "evaluation": "out_of_sample", "oos_days": days})
+            row.update({
+                "variant": name,
+                "evaluation": "out_of_sample",
+                "oos_days": days,
+                "adx_gate": ADX_GATES.get(name),
+            })
             output.append(row)
             print(
                 f"{symbol} / {name}: trades={result.trades}, "
