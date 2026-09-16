@@ -194,7 +194,7 @@ def _prepared_plan(daily, h4, h1, row, cfg):
         entry = close - buf
         stops = [close + atr * cfg.stop_atr]
         if float(row["ema50"]) > entry: stops.append(float(row["ema50"]))
-        if h1["last_swing_high"] is not None and h1["last_swing_high"] > entry: stops.append(float(row["last_swing_high"]))
+        if h1["last_swing_high"] is not None and h1["last_swing_high"] > entry: stops.append(float(h1["last_swing_high"]))
         stop = max(stops); risk = stop - entry
         t1 = entry - risk * cfg.target1_r; t2 = entry - risk * cfg.target2_r
         inv = (f"1H終値が直近ダウ高値 {h1['last_swing_high']:.5f} を明確に上回る、または4Hダウ構造が上昇へ転換"
