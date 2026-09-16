@@ -31,7 +31,7 @@ jobs:
       DUKASCOPY_BATCH_PAUSE_MS: "5000"
       DUKASCOPY_RETRY_PAUSE_MS: "10000"
       BACKTEST_DAYS: "730"
-      BACKTEST_SYMBOLS: "USDJPY,XAUUSD"
+      BACKTEST_SYMBOLS: "USDJPY,XAUUSD,EURUSD,GBPUSD,AUDUSD,USDCAD,USDCHF"
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -65,7 +65,7 @@ jobs:
       - name: ユニットテスト
         run: python -m unittest discover -s tests -v
 
-      - name: 730日バックテスト（USDJPY + XAUUSD）
+      - name: 730日バックテスト（全7銘柄）
         timeout-minutes: 35
         shell: bash
         run: |
@@ -77,8 +77,9 @@ jobs:
           from pathlib import Path
           p = Path("backtest_results.json")
           data = json.loads(p.read_text(encoding="utf-8"))
+          expected = ["USDJPY", "XAUUSD", "EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF"]
           symbols = [row["symbol"] for row in data]
-          assert symbols == ["USDJPY", "XAUUSD"], symbols
+          assert symbols == expected, symbols
           required = ["trades", "wins", "losses", "win_rate_pct", "total_r", "expectancy_r", "profit_factor", "max_drawdown_r", "max_consecutive_losses"]
           for row in data:
               assert all(k in row for k in required), row
@@ -104,4 +105,4 @@ jobs:
             backtest.log
           retention-days: 14
 
-# Next promotion: 730-day / 7-symbol, then out-of-sample and regime/year analysis.
+# Promotion sequence: 7-symbol validation -> out-of-sample validation -> regime/year analysis -> only then parameter changes.
