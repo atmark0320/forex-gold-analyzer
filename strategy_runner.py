@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from market_data_provider import build_timeframes, fetch_ohlc, latest_completed_4h_time
@@ -17,6 +18,17 @@ SYMBOLS = {
     "ドル円 (USD/JPY)": "USDJPY",
     "金 (XAU/USD スポット)": "XAUUSD",
 }
+
+# Production policy promoted from the 180-day OOS candidate screening:
+# 1) require 4H ADX >= 25 to avoid weak/non-trending entries
+# 2) use faster partial/primary targets (1.25R / 2.0R)
+# The underlying Dow/indicator calculation remains unchanged.
+PRODUCTION_CONFIG = replace(
+    StrategyConfig(),
+    target1_r=1.25,
+    target2_r=2.0,
+)
+PRODUCTION_MIN_ADX = 25.0
 
 
 def fmt_price(value: float, symbol: str) -> str:
@@ -52,9 +64,35 @@ def is_new_4h_ready(h1, now: datetime | None = None) -> tuple[bool, str]:
     return False, f"最新の完全4H足 {latest_utc.isoformat()} / 今回対象 {expected.isoformat()}"
 
 
+def build_production_plan(daily, h4, h1):
+    """Generate the live plan using the OOS-screened production overlay."""
+    plan = generate_trade_plan(daily, h4, h1, PRODUCTION_CONFIG)
+    hs4 = timeframe_snapshot(h4, PRODUCTION_CONFIG)
+    if float(hs4["adx"]) < PRODUCTION_MIN_ADX:
+        return replace(
+            plan,
+            direction="wait",
+            confidence="low",
+            entry_type="wait",
+            entry_price=None,
+            stop_price=None,
+            target1=None,
+            target2=None,
+            risk_per_unit=None,
+            reward_r1=None,
+            reward_r2=None,
+            reasons=tuple(
+                list(plan.reasons)
+                + [f"4H ADX {float(hs4['adx']):.2f} < {PRODUCTION_MIN_ADX:.0f} のため見送り"]
+            ),
+            invalidation=f"4H ADXが{PRODUCTION_MIN_ADX:.0f}以上になるまで見送り",
+        )
+    return plan
+
+
 def build_report(name: str, symbol: str, daily, h4, h1, h4_start) -> str:
-    cfg = StrategyConfig()
-    plan = generate_trade_plan(daily, h4, h1, cfg)
+    cfg = PRODUCTION_CONFIG
+    plan = build_production_plan(daily, h4, h1)
     ds = timeframe_snapshot(daily, cfg)
     hs4 = timeframe_snapshot(h4, cfg)
     hs1 = timeframe_snapshot(h1, cfg)
@@ -98,6 +136,7 @@ def build_report(name: str, symbol: str, daily, h4, h1, h4_start) -> str:
         "",
         f"■無効化条件: {p['invalidation']}",
         "※予測の根幹はダウ理論。EMA・RSI・MACD・ADXは補助的な確認に使用しています。",
+        "※本番条件: 4H ADX 25未満は見送り、目標1/目標2は1.25R/2.0R。",
         "※XAU/USDはスポット価格（Dukascopy BID 1H）を使用しています。",
         "※これはテクニカル分析による戦略候補であり、利益や将来価格を保証するものではありません。",
     ]
@@ -124,7 +163,7 @@ def main() -> None:
             if reference_h4 is None or h4_start > reference_h4:
                 reference_h4 = h4_start
 
-            text = build_report(name, symbol, daily, h4, h1, h4_start)
+            text = build_report(name, symbol, daily, h1, h1, h4_start)
             payloads.append({"type": "text", "text": text})
             print(text)
         except Exception as exc:
@@ -135,8 +174,6 @@ def main() -> None:
         raise RuntimeError("USD/JPY・XAU/USDスポットの戦略生成に失敗しました: " + "; ".join(failures))
 
     if not payloads:
-        # Scheduled runs can legitimately be skipped when a complete 4H candle has not formed
-        # (e.g. weekend or holiday). Do not send stale analysis or report a false failure.
         print("No new complete 4H candle is ready; skipping notification.")
         return
 
