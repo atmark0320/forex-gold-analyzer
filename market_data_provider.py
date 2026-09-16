@@ -19,11 +19,15 @@ YFINANCE_SYMBOLS = {
     "USDJPY": "JPY=X", "XAUUSD": "XAUUSD=X", "EURUSD": "EURUSD=X",
     "GBPUSD": "GBPUSD=X", "AUDUSD": "AUDUSD=X", "USDCAD": "CAD=X", "USDCHF": "CHF=X",
 }
-DOWNLOAD_CHUNK_DAYS = 120
+# Shorter chunks are more resilient when Dukascopy has a bad/empty artifact in
+# a long historical request. This matters especially for XAUUSD gap recovery.
+DOWNLOAD_CHUNK_DAYS = 30
 REFRESH_DAYS = int(os.environ.get("FOREX_DATA_REFRESH_DAYS", "14"))
 MAX_DOWNLOAD_ATTEMPTS = 5
 CACHE_DIR = Path(os.environ.get("FOREX_DATA_CACHE_DIR", ".cache/market_data"))
-DUKASCOPY_CACHE_DIR = CACHE_DIR / "dukascopy_artifacts"
+# Use a fresh artifact namespace so a previously cached empty/corrupt artifact
+# cannot poison the gap-recovery path.
+DUKASCOPY_CACHE_DIR = CACHE_DIR / "dukascopy_artifacts_v2"
 BATCH_SIZE = int(os.environ.get("DUKASCOPY_BATCH_SIZE", "2"))
 BATCH_PAUSE_MS = int(os.environ.get("DUKASCOPY_BATCH_PAUSE_MS", "5000"))
 RETRY_PAUSE_MS = int(os.environ.get("DUKASCOPY_RETRY_PAUSE_MS", "10000"))
@@ -51,7 +55,7 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
                 if result.returncode != 0:
                     last_error = result.stderr[-4000:] or result.stdout[-4000:]
-                    if "429" in last_error and attempt < MAX_DOWNLOAD_ATTEMPTS:
+                    if attempt < MAX_DOWNLOAD_ATTEMPTS:
                         time.sleep(RETRY_PAUSE_MS / 1000 * attempt)
                         continue
                     raise RuntimeError("Dukascopy download failed: " + last_error)
@@ -61,7 +65,14 @@ def _run_dukascopy(instrument: str, start: datetime, end: datetime) -> pd.DataFr
                     if not candidates:
                         raise RuntimeError("Dukascopy returned no CSV data")
                     path = candidates[0]
-                df = pd.read_csv(path)
+                try:
+                    df = pd.read_csv(path)
+                except pd.errors.EmptyDataError as exc:
+                    last_error = "Dukascopy returned an empty CSV"
+                    if attempt < MAX_DOWNLOAD_ATTEMPTS:
+                        time.sleep(RETRY_PAUSE_MS / 1000 * attempt)
+                        continue
+                    raise RuntimeError(last_error) from exc
             required = {"timestamp", "open", "high", "low", "close"}
             missing = required.difference(df.columns)
             if missing:
@@ -150,12 +161,12 @@ def _download_range(symbol: str, instrument: str, start: datetime, end: datetime
         chunk = _download_with_fallback(symbol, instrument, cursor, chunk_end)
         if not chunk.empty:
             chunks.append(chunk)
-            combined = pd.concat(chunks).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")]
-            _save_cached(symbol, combined)
         cursor = chunk_end
         if cursor < end:
             time.sleep(5)
-    return pd.concat(chunks).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")] if chunks else pd.DataFrame()
+    if not chunks:
+        return pd.DataFrame()
+    return pd.concat(chunks).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")]
 
 
 def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.DataFrame:
@@ -177,24 +188,16 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
         cached = cached.sort_index()
         cache_max = cached.index.max()
         pieces = [cached]
-
-        # Do not assume a cache is current merely because its oldest bar covers
-        # the requested warm-up. If the newest cached bar is months behind the
-        # refresh boundary, fill the entire missing tail first. This prevents
-        # silent gaps such as an XAUUSD cache ending in May while the run is in
-        # September, which would invalidate the OOS date range.
         if cache_max < refresh_start_ts:
             gap_start = (cache_max + pd.Timedelta(hours=1)).to_pydatetime()
             print(f"INFO {key}: cache tail is stale ({cache_max.isoformat()}); filling through {refresh_start_ts.isoformat()}", flush=True)
             gap = _download_range(key, instrument, gap_start, refresh_start)
             if not gap.empty:
                 pieces.append(gap)
-
-        if REFRESH_DAYS > 0:
+        if REFRESH_DAYS > 0 and refresh_start < end:
             fresh = _download_with_fallback(key, instrument, refresh_start, end)
             if not fresh.empty:
                 pieces.append(fresh)
-
         df = pd.concat(pieces).sort_index().loc[lambda x: ~x.index.duplicated(keep="last")]
     else:
         df = _download_range(key, instrument, start, end)
@@ -204,12 +207,11 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     df = df.loc[(df.index >= start_ts) & (df.index < end_ts)]
     if len(df) < 300:
         print(f"WARNING {key}: cache produced only {len(df)} hourly bars; forcing clean refresh", flush=True)
-        fresh = _download_with_fallback(key, instrument, start, end)
+        fresh = _download_range(key, instrument, start, end)
         fresh = _drop_forming_h1(fresh.sort_index(), end)
         fresh = fresh.loc[(fresh.index >= start_ts) & (fresh.index < end_ts)]
         if len(fresh) >= 300:
             df = fresh
-            _save_cached(key, df)
     if len(df) < 300:
         raise RuntimeError(f"{symbol}: insufficient hourly data ({len(df)} bars)")
     _save_cached(key, df)
