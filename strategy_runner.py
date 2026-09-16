@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pandas as pd
 
 from market_data_provider import build_timeframes, fetch_ohlc
-from technical_engine import StrategyConfig, generate_trade_plan
+from strategy_profiles import production_adx_gate, production_config, production_profile
+from technical_engine import generate_trade_plan
 
 SYMBOLS = ("USDJPY", "XAUUSD")
-PRODUCTION_CONFIG = StrategyConfig()
 
 
 def expected_4h_start(now: datetime) -> datetime:
@@ -26,11 +27,34 @@ def _fmt(value: float | None, digits: int = 5) -> str:
     return f"{float(value):.{digits}f}"
 
 
-def build_production_plan(h1: pd.DataFrame):
+def _apply_profile_gate(symbol: str, plan, h4: pd.DataFrame):
+    gate = production_adx_gate(symbol)
+    if gate is None or float(h4["adx"].iloc[-1]) >= gate:
+        return plan
+    return replace(
+        plan,
+        direction="wait",
+        confidence="low",
+        entry_type="wait",
+        entry_price=None,
+        stop_price=None,
+        target1=None,
+        target2=None,
+        risk_per_unit=None,
+        reward_r1=None,
+        reward_r2=None,
+        reasons=tuple(list(plan.reasons) + [f"4H ADX {float(h4['adx'].iloc[-1]):.2f} < {gate:.0f} のため見送り"]),
+        invalidation=f"4H ADXが{gate:.0f}以上になるまで見送り",
+    )
+
+
+def build_production_plan(symbol: str, h1: pd.DataFrame):
     daily, h4 = build_timeframes(h1)
     if daily.empty or h4.empty or h1.empty:
         raise RuntimeError("insufficient completed timeframe data")
-    return generate_trade_plan(daily, h4, h1, PRODUCTION_CONFIG), {
+    cfg = production_config(symbol)
+    plan = generate_trade_plan(daily, h4, h1, cfg)
+    return _apply_profile_gate(symbol, plan, h4), {
         "D1": daily,
         "H4": h4,
         "H1": h1,
@@ -44,6 +68,7 @@ def build_report(symbol: str, mtf: dict[str, pd.DataFrame], plan) -> str:
     market_name = "XAU/USD spot" if symbol == "XAUUSD" else "USD/JPY spot"
     lines = [
         f"## {symbol} / {market_name}",
+        f"Strategy profile: {production_profile(symbol)}",
         f"判定時刻(UTC): {pd.Timestamp.now(tz='UTC').strftime('%Y-%m-%d %H:%M:%S')}",
         "",
         f"判定: {plan.direction.upper()}",
@@ -76,7 +101,7 @@ def build_report(symbol: str, mtf: dict[str, pd.DataFrame], plan) -> str:
         "",
         f"Invalidation: {plan.invalidation}",
         "",
-        "※本番条件: StrategyConfigの基準ロジックを使用。ローリングOOSで安定性を確認できなかったADXゲート・高速TP・上昇ADX条件は本番判定に使用しない。",
+        "※本番条件: 数値判断は決定論的なStrategyConfigで生成。XAUUSDの代替プロファイルは環境変数FOREX_XAU_PROFILEで明示指定した場合のみ有効。",
         "※本番監視対象はUSDJPY/XAUUSD。その他5銘柄は検証専用。",
         "※H1/H4/D1は確定足のみを使用。",
     ])
@@ -87,7 +112,7 @@ def main() -> None:
     for symbol in SYMBOLS:
         try:
             h1 = fetch_ohlc(symbol, days=450, end=datetime.now(timezone.utc))
-            plan, mtf = build_production_plan(h1)
+            plan, mtf = build_production_plan(symbol, h1)
             print(build_report(symbol, mtf, plan))
         except Exception as exc:
             print(f"{symbol}: ERROR: {exc}")
