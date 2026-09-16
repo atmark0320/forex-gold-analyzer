@@ -140,7 +140,7 @@ jobs:
           print("CANDIDATE_RESULT_VALID rows=126")
           PY
 
-      - name: ローリングOOS検証（7期間×180日×18条件×7銘柄）
+      - name: ローリングOOS検証（7期間×180日×6条件×7銘柄）
         timeout-minutes: 35
         shell: bash
         run: |
@@ -153,12 +153,14 @@ jobs:
           from pathlib import Path
           data = json.loads(Path("walk_forward_results.json").read_text(encoding="utf-8"))
           summary = json.loads(Path("walk_forward_summary.json").read_text(encoding="utf-8"))
-          assert len(data) == 882, len(data)
-          assert len(summary) == 126, len(summary)
+          assert len(data) == 294, len(data)
+          assert len(summary) == 42, len(summary)
           assert {row["window"] for row in data} == set(range(1, 8))
+          expected = {"baseline", "adx25_gate", "adx25_faster_target", "full_alignment_adx25", "adx25_rising", "adx25_rising_faster_target"}
+          assert {row["variant"] for row in data} == expected
           assert all(row["evaluation"] == "rolling_out_of_sample" for row in data)
           assert all(row["trades"] == row["wins"] + row["losses"] for row in data)
-          print("WALK_FORWARD_RESULT_VALID rows=882 summaries=126")
+          print("WALK_FORWARD_RESULT_VALID rows=294 summaries=42")
           PY
 
       - name: 市場データキャッシュを保存
