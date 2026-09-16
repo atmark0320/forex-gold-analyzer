@@ -153,7 +153,13 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     end_ts = pd.Timestamp(end).tz_convert("UTC")
     cached = _load_cached(key)
 
-    if cached is not None and not cached.empty and cached.index.min() <= start_ts:
+    # A market's first available H1 bar can legitimately be one or a few hours
+    # after the calendar start (weekend/session boundary). Treat a cache as
+    # warm enough when it misses the requested start by at most 24 hours rather
+    # than forcing another full Dukascopy download. This is especially
+    # important for XAUUSD, where a retry can hit the provider's rate limit.
+    cache_start_tolerance = pd.Timedelta(hours=24)
+    if cached is not None and not cached.empty and cached.index.min() <= start_ts + cache_start_tolerance:
         if REFRESH_DAYS > 0:
             refresh_start = max(start, end - timedelta(days=REFRESH_DAYS))
             refresh_start_ts = pd.Timestamp(refresh_start).tz_convert("UTC")
@@ -180,8 +186,6 @@ def fetch_ohlc(symbol: str, days: int = 450, end: datetime | None = None) -> pd.
     df = _drop_forming_h1(df, end)
     df = df.loc[(df.index >= start_ts) & (df.index < end_ts)]
     if len(df) < 300:
-        # A stale/incomplete cache must never be accepted as a successful backtest input.
-        # Force a clean range download once, then validate the result again.
         print(f"WARNING {key}: cache produced only {len(df)} hourly bars; forcing clean refresh", flush=True)
         fresh = _download_with_fallback(key, instrument, start, end)
         fresh = _drop_forming_h1(fresh.sort_index(), end)
