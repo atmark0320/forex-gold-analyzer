@@ -69,21 +69,6 @@ jobs:
       - name: ユニットテスト
         run: python -m unittest discover -s tests -v
 
-      - name: バックテスト互換性修正を適用
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path("backtest_strategy.py")
-          s = p.read_text(encoding="utf-8")
-          s2 = s.replace('row["last_swing_high"]', 'h1["last_swing_high"]')
-          s2 = s2.replace('row["last_swing_low"]', 'h1["last_swing_low"]')
-          if s2 == s:
-              raise SystemExit("Expected backtest compatibility references were not found")
-          p.write_text(s2, encoding="utf-8")
-          print("Applied backtest swing-reference compatibility fix")
-          PY
-
       - name: 730日バックテスト（全7銘柄）
         timeout-minutes: 35
         shell: bash
@@ -162,7 +147,7 @@ jobs:
 
       - name: バックテスト結果を保存
         if: success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a0 # v7.0.1
         with:
           name: strategy-validation-results
           path: |
