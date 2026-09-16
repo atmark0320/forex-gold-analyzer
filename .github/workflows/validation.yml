@@ -22,15 +22,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  backtest-smoke:
+  backtest-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       FOREX_DATA_REFRESH_DAYS: "0"
       DUKASCOPY_BATCH_SIZE: "2"
       DUKASCOPY_BATCH_PAUSE_MS: "5000"
       DUKASCOPY_RETRY_PAUSE_MS: "10000"
-      BACKTEST_DAYS: "90"
+      BACKTEST_DAYS: "730"
       BACKTEST_SYMBOLS: "USDJPY"
     steps:
       - name: リポジトリをチェックアウト
@@ -65,8 +65,8 @@ jobs:
       - name: ユニットテスト
         run: python -m unittest discover -s tests -v
 
-      - name: スモークバックテスト（90日・USDJPY）
-        timeout-minutes: 10
+      - name: 730日バックテスト（USDJPY）
+        timeout-minutes: 20
         shell: bash
         run: |
           set -o pipefail
@@ -78,6 +78,9 @@ jobs:
           p = Path("backtest_results.json")
           data = json.loads(p.read_text(encoding="utf-8"))
           assert len(data) == 1 and data[0]["symbol"] == "USDJPY"
+          required = ["trades", "wins", "losses", "win_rate_pct", "total_r", "expectancy_r", "profit_factor", "max_drawdown_r", "max_consecutive_losses"]
+          assert all(k in data[0] for k in required)
+          assert data[0]["trades"] == data[0]["wins"] + data[0]["losses"]
           print("RESULT_VALID", data)
           PY
 
@@ -88,14 +91,14 @@ jobs:
           path: .cache/market_data
           key: dukascopy-h1-v2-${{ github.run_id }}
 
-      - name: スモーク結果を保存
+      - name: バックテスト結果を保存
         if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: strategy-validation-smoke-results
+          name: strategy-validation-results
           path: |
             backtest_results.json
             backtest.log
           retention-days: 14
 
-# Full 730-day / 7-symbol validation will be enabled after the smoke test is proven stable.
+# Next promotion: 730-day / 2-symbol, then 730-day / 7-symbol validation.
