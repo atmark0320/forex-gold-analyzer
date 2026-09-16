@@ -14,19 +14,18 @@ from pathlib import Path
 from backtest_strategy import DEFAULT_SYMBOLS, evaluate, load_data
 from technical_engine import StrategyConfig
 
+BASE = StrategyConfig()
 CANDIDATES = {
-    "baseline": StrategyConfig(),
-    # Require one additional confirmation point before entering.
-    "stricter_confirmation": replace(StrategyConfig(), min_score=8, strong_score=10),
-    # Give trend continuation more room while keeping the same Dow-first entry logic.
-    "wider_target": replace(StrategyConfig(), target1_r=1.8, target2_r=2.8),
-    # Reduce target distance to test whether the baseline is losing too many
-    # trades to reversals before reaching 1.5R.
-    "faster_target": replace(StrategyConfig(), target1_r=1.25, target2_r=2.0),
-    # Test a wider volatility stop without changing the signal conditions.
-    "wider_stop": replace(StrategyConfig(), stop_atr=1.60),
-    # Require a slightly stronger breakout displacement before execution.
-    "larger_entry_buffer": replace(StrategyConfig(), entry_buffer_atr=0.15),
+    "baseline": BASE,
+    "stricter_confirmation": replace(BASE, min_score=8, strong_score=10),
+    "wider_target": replace(BASE, target1_r=1.8, target2_r=2.8),
+    "faster_target": replace(BASE, target1_r=1.25, target2_r=2.0),
+    "wider_stop": replace(BASE, stop_atr=1.60),
+    "larger_entry_buffer": replace(BASE, entry_buffer_atr=0.15),
+    "stricter_faster_target": replace(BASE, min_score=8, strong_score=10, target1_r=1.25, target2_r=2.0),
+    "stricter_larger_buffer": replace(BASE, min_score=8, strong_score=10, entry_buffer_atr=0.15),
+    "faster_larger_buffer": replace(BASE, target1_r=1.25, target2_r=2.0, entry_buffer_atr=0.15),
+    "stricter_faster_larger_buffer": replace(BASE, min_score=8, strong_score=10, target1_r=1.25, target2_r=2.0, entry_buffer_atr=0.15),
 }
 
 
@@ -48,9 +47,7 @@ def main() -> None:
         start = end - __import__("pandas").Timedelta(days=days)
         for name, cfg in CANDIDATES.items():
             result = evaluate(
-                symbol,
-                h1,
-                cfg=cfg,
+                symbol, h1, cfg=cfg,
                 trade_start=start,
                 trade_end=end + __import__("pandas").Timedelta(hours=1),
             )
@@ -63,7 +60,6 @@ def main() -> None:
                 f"PF={result.profit_factor}, DD={result.max_drawdown_r}",
                 flush=True,
             )
-
     Path("strategy_candidates_oos.json").write_text(
         json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8"
     )
