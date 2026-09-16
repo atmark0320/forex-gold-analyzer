@@ -16,9 +16,8 @@ def expected_4h_start(now: datetime) -> datetime:
     current = now.astimezone(timezone.utc)
     block_hour = (current.hour // 4) * 4
     start = current.replace(hour=block_hour, minute=0, second=0, microsecond=0)
-    if current == start:
-        start -= pd.Timedelta(hours=4)
-    return start
+    # The current block is still forming, including exactly at its boundary.
+    return start - pd.Timedelta(hours=4)
 
 
 def _fmt(value: float | None, digits: int = 5) -> str:
