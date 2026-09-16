@@ -8,6 +8,7 @@ on:
       - "market_data_provider.py"
       - "backtest_strategy.py"
       - "oos_validation.py"
+      - "strategy_candidates.py"
       - "tests/**"
       - "requirements.txt"
       - ".github/workflows/validation.yml"
@@ -25,7 +26,7 @@ concurrency:
 jobs:
   backtest-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       FOREX_DATA_REFRESH_DAYS: "0"
       DUKASCOPY_BATCH_SIZE: "2"
@@ -34,6 +35,7 @@ jobs:
       BACKTEST_DAYS: "730"
       OOS_DAYS: "180"
       BACKTEST_SYMBOLS: "USDJPY,XAUUSD,EURUSD,GBPUSD,AUDUSD,USDCAD,USDCHF"
+
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -111,6 +113,30 @@ jobs:
           print("OOS_RESULT_VALID", data)
           PY
 
+      - name: 戦略候補OOS比較（6条件×全7銘柄）
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -o pipefail
+          python -u strategy_candidates.py | tee strategy_candidates.log
+          test -s strategy_candidates_oos.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("strategy_candidates_oos.json").read_text(encoding="utf-8"))
+          expected = ["USDJPY", "XAUUSD", "EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "USDCHF"]
+          assert len(data) == 42, len(data)
+          assert sorted({row["symbol"] for row in data}) == sorted(expected)
+          assert sorted({row["variant"] for row in data}) == sorted([
+              "baseline", "stricter_confirmation", "wider_target", "faster_target",
+              "wider_stop", "larger_entry_buffer"
+          ])
+          for row in data:
+              assert row["evaluation"] == "out_of_sample", row
+              assert row["trades"] == row["wins"] + row["losses"], row
+          print("CANDIDATE_RESULT_VALID", len(data))
+          PY
+
       - name: 市場データキャッシュを保存
         if: always()
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.4
@@ -120,7 +146,7 @@ jobs:
 
       - name: バックテスト結果を保存
         if: success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a0 # v7.0.1
         with:
           name: strategy-validation-results
           path: |
@@ -128,7 +154,10 @@ jobs:
             backtest.log
             oos_results.json
             oos.log
+            strategy_candidates_oos.json
+            strategy_candidates.log
           retention-days: 14
 
 # Negative results are retained. Every new strategy condition is evaluated across all 7 symbols.
-# Promotion sequence: 730-day all-symbol validation -> 180-day all-symbol OOS -> regime/year analysis -> targeted changes -> repeat both IS and OOS.
+# Promotion sequence: 730-day all-symbol validation -> 180-day all-symbol OOS -> candidate OOS screening ->
+# regime/year analysis -> targeted changes -> repeat both IS and OOS.
