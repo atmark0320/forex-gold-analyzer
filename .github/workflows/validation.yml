@@ -126,8 +126,8 @@ jobs:
           print("OOS_RESULT_VALID", data)
           PY
 
-      - name: 戦略候補OOS比較（10条件×全7銘柄）
-        timeout-minutes: 30
+      - name: 戦略候補OOS比較（13条件×全7銘柄）
+        timeout-minutes: 35
         shell: bash
         run: |
           set -o pipefail
@@ -141,9 +141,10 @@ jobs:
           variants = [
               "baseline", "stricter_confirmation", "wider_target", "faster_target",
               "wider_stop", "larger_entry_buffer", "stricter_faster_target",
-              "stricter_larger_buffer", "faster_larger_buffer", "stricter_faster_larger_buffer"
+              "stricter_larger_buffer", "faster_larger_buffer", "stricter_faster_larger_buffer",
+              "adx25_gate", "adx22_gate", "adx25_faster_target"
           ]
-          assert len(data) == 70, len(data)
+          assert len(data) == 91, len(data)
           assert sorted({row["symbol"] for row in data}) == sorted(expected)
           assert sorted({row["variant"] for row in data}) == sorted(variants)
           for row in data:
