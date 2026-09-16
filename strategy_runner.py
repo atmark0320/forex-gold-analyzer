@@ -21,10 +21,13 @@ def build_production_plan(h1: pd.DataFrame):
     daily, h4 = build_timeframes(h1)
     if daily.empty or h4.empty or h1.empty:
         raise RuntimeError("insufficient completed timeframe data")
-    # generate_trade_plan consumes completed D1/H4/H1 data. H1 is already
-    # stripped of the forming candle by fetch_ohlc().
-    mtf = {"D1": daily, "H4": h4, "H1": h1}
-    return generate_trade_plan(mtf, PRODUCTION_CONFIG), mtf
+    # technical_engine.generate_trade_plan expects completed D1/H4/H1 frames
+    # as separate arguments. fetch_ohlc() has already removed the forming H1 bar.
+    return generate_trade_plan(daily, h4, h1, PRODUCTION_CONFIG), {
+        "D1": daily,
+        "H4": h4,
+        "H1": h1,
+    }
 
 
 def build_report(symbol: str, mtf: dict[str, pd.DataFrame], plan) -> str:
@@ -72,8 +75,6 @@ def build_report(symbol: str, mtf: dict[str, pd.DataFrame], plan) -> str:
 
 
 def main() -> None:
-    # Fetching through the existing provider preserves the Dukascopy spot
-    # source/fallback and its forming-candle protection.
     for symbol in SYMBOLS:
         try:
             h1 = fetch_ohlc(symbol, days=450, end=datetime.now(timezone.utc))
