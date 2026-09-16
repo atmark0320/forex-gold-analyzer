@@ -114,7 +114,7 @@ def _prepared_plan(daily,h4,h1,row,cfg):
     else:
         entry=close-buf; stops=[close+atr*cfg.stop_atr]
         if float(row["ema50"])>entry: stops.append(float(row["ema50"]))
-        if h1["last_swing_high"] is not None and h1["last_swing_high"]>entry: stops.append(float(h1["last_swing_high"]))
+        if h1["last_swing_high"] is not None and h1["last_swing_high"]>entry: stops.append(float(h1["last_swing_high"])
         stop=max(stops); risk=stop-entry; t1=entry-risk*cfg.target1_r; t2=entry-risk*cfg.target2_r
         inv=f"1H終値が直近ダウ高値 {h1['last_swing_high']:.5f} を明確に上回る、または4Hダウ構造が上昇へ転換" if h1["last_swing_high"] is not None else "1Hダウ構造が上昇へ転換、または直近高値を明確に上抜け"
     if risk<=0: return TradePlan("wait",score,"low",regime,"wait",None,None,None,None,None,None,None,tuple(reasons+["リスク幅を正常に計算できない"]),"有効なダウ構造と損切り位置が確定するまで見送り")
@@ -124,10 +124,8 @@ def evaluate(symbol,h1,cfg=StrategyConfig(),max_hold_bars=48,entry_valid_bars=3)
     h1=h1.sort_index().copy(); daily_raw,h4_raw=build_timeframes(h1)
     h1i,h4i,dailyi=add_indicators(h1,cfg),add_indicators(h4_raw,cfg),add_indicators(daily_raw,cfg)
     h1d,h4d,dd=_dow_snapshots(h1i,cfg),_dow_snapshots(h4i,cfg),_dow_snapshots(dailyi,cfg)
-    h4pos={ts:i for i,ts in enumerate(h4i.index)}; dts=dailyi.index.to_numpy(); decisions=[]
+    h4pos={ts:i for i,ts in enumerate(h4i.index)}; decisions=[]
     for i,ts in enumerate(h1i.index):
-        # A 4H candle beginning at ts is complete only after its fourth H1
-        # candle closes. Therefore the decision row is ts+3h.
         block_start=ts-pd.Timedelta(hours=3)
         hp=h4pos.get(block_start)
         if hp is not None and i>=80: decisions.append((i,hp))
@@ -135,7 +133,7 @@ def evaluate(symbol,h1,cfg=StrategyConfig(),max_hold_bars=48,entry_valid_bars=3)
     for n,(i,hp) in enumerate(decisions,1):
         if i<blocked or hp<29: continue
         ts=h1i.index[i]
-        dp=int(np.searchsorted(dts,np.datetime64(ts),side="right")-1)
+        dp=int(dailyi.index.searchsorted(ts,side="right")-1)
         if dp<59: continue
         plan=_prepared_plan(_snapshot(dailyi,dd[dp],dp),_snapshot(h4i,h4d[hp],hp),_snapshot(h1i,h1d[i],i),h1i.iloc[i],cfg)
         if plan.direction=="wait" or plan.entry_price is None or plan.stop_price is None or plan.target1 is None: continue
@@ -161,9 +159,9 @@ def main():
     print(f"BACKTEST start: days={days}, symbols={','.join(symbols)}",flush=True)
     for n,symbol in enumerate(symbols,1):
         t=time.monotonic(); print(f"[{n}/{len(symbols)}] loading {symbol}...",flush=True); h1=load_data(symbol)
-        print(f"[{n}/{len(symbols)}] {symbol}: {len(h1):,} H1 bars; evaluating completed 4H decisions...",flush=True); r=evaluate(symbol,h1); results.append(asdict(r))
-        print(f"[{n}/{len(symbols)}] {symbol}: {r.trades} trades, PF={r.profit_factor}, Expectancy={r.expectancy_r}R, elapsed={time.monotonic()-t:.1f}s",flush=True)
+        print(f"[{n}/{len(symbols)}] {symbol}: {len(h1):,} H1 bars; evaluating completed 4H decisions...",flush=True)
+        r=evaluate(symbol,h1); results.append(asdict(r)); print(f"[{n}/{len(symbols)}] {symbol}: trades={r.trades}, win={r.win_rate_pct}%, totalR={r.total_r}, PF={r.profit_factor}, elapsed={time.monotonic()-t:.1f}s",flush=True)
     with open("backtest_results.json","w",encoding="utf-8") as f: json.dump(results,f,ensure_ascii=False,indent=2)
-    print(f"BACKTEST complete in {time.monotonic()-started:.1f}s",flush=True)
+    print(f"BACKTEST complete: {len(results)} symbols in {time.monotonic()-started:.1f}s",flush=True)
 
 if __name__=="__main__": main()
