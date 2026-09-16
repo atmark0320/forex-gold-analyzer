@@ -24,14 +24,14 @@ concurrency:
 jobs:
   backtest-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       FOREX_DATA_REFRESH_DAYS: "0"
       DUKASCOPY_BATCH_SIZE: "2"
       DUKASCOPY_BATCH_PAUSE_MS: "5000"
       DUKASCOPY_RETRY_PAUSE_MS: "10000"
       BACKTEST_DAYS: "730"
-      BACKTEST_SYMBOLS: "USDJPY"
+      BACKTEST_SYMBOLS: "USDJPY,XAUUSD"
     steps:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -65,8 +65,8 @@ jobs:
       - name: ユニットテスト
         run: python -m unittest discover -s tests -v
 
-      - name: 730日バックテスト（USDJPY）
-        timeout-minutes: 20
+      - name: 730日バックテスト（USDJPY + XAUUSD）
+        timeout-minutes: 35
         shell: bash
         run: |
           set -o pipefail
@@ -77,10 +77,13 @@ jobs:
           from pathlib import Path
           p = Path("backtest_results.json")
           data = json.loads(p.read_text(encoding="utf-8"))
-          assert len(data) == 1 and data[0]["symbol"] == "USDJPY"
+          symbols = [row["symbol"] for row in data]
+          assert symbols == ["USDJPY", "XAUUSD"], symbols
           required = ["trades", "wins", "losses", "win_rate_pct", "total_r", "expectancy_r", "profit_factor", "max_drawdown_r", "max_consecutive_losses"]
-          assert all(k in data[0] for k in required)
-          assert data[0]["trades"] == data[0]["wins"] + data[0]["losses"]
+          for row in data:
+              assert all(k in row for k in required), row
+              assert row["trades"] == row["wins"] + row["losses"], row
+              assert row["trades"] > 0, row
           print("RESULT_VALID", data)
           PY
 
@@ -101,4 +104,4 @@ jobs:
             backtest.log
           retention-days: 14
 
-# Next promotion: 730-day / 2-symbol, then 730-day / 7-symbol validation.
+# Next promotion: 730-day / 7-symbol, then out-of-sample and regime/year analysis.
