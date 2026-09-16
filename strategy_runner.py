@@ -163,7 +163,7 @@ def main() -> None:
             if reference_h4 is None or h4_start > reference_h4:
                 reference_h4 = h4_start
 
-            text = build_report(name, symbol, daily, h1, h1, h4_start)
+            text = build_report(name, symbol, daily, h4, h1, h4_start)
             payloads.append({"type": "text", "text": text})
             print(text)
         except Exception as exc:
