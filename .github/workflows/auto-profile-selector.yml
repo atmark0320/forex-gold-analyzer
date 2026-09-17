@@ -4,7 +4,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+env:
+  AUTO_PROFILE_SWITCH: "1"
 
 jobs:
   recommend-profile:
@@ -24,11 +27,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: プロファイル候補を評価
+      - name: プロファイル候補を評価・安全な候補を自動適用
         run: python auto_profile_selector.py
+
+      - name: 自動切替結果をリポジトリへ保存
+        run: |
+          if [ -z "$(git status --porcelain -- active_profiles.json)" ]; then
+            echo "active_profiles.json に変更はありません"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add active_profiles.json
+          git commit -m "chore: apply safe auto-selected profile"
+          git push
 
       - name: 結果を保存
         uses: actions/upload-artifact@v4
         with:
           name: auto-profile-recommendation
-          path: auto_profile_recommendation.json
+          path: |
+            auto_profile_recommendation.json
+            active_profiles.json
+          if-no-files-found: warn
