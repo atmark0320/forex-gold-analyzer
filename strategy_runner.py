@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 
@@ -10,6 +12,7 @@ from strategy_profiles import production_adx_gate, production_config, production
 from technical_engine import generate_trade_plan
 
 SYMBOLS = ("USDJPY", "XAUUSD")
+NOTIFY_PAYLOAD_FILE = Path("notify_payloads.json")
 
 
 def expected_4h_start(now: datetime) -> datetime:
@@ -131,14 +134,27 @@ def build_report(symbol: str, mtf: dict[str, pd.DataFrame], plan) -> str:
 
 
 def main() -> None:
+    payloads: list[dict] = []
+    failures: list[str] = []
     for symbol in SYMBOLS:
         try:
             h1 = fetch_ohlc(symbol, days=450, end=datetime.now(timezone.utc))
             plan, mtf = build_production_plan(symbol, h1)
-            print(build_report(symbol, mtf, plan))
+            report = build_report(symbol, mtf, plan)
+            print(report)
+            payloads.append({"type": "text", "text": report})
         except Exception as exc:
             print(f"{symbol}: ERROR: {exc}")
+            failures.append(symbol)
         print("\n" + "=" * 80 + "\n")
+
+    NOTIFY_PAYLOAD_FILE.write_text(
+        json.dumps(payloads, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"{NOTIFY_PAYLOAD_FILE} を書き出しました({len(payloads)}件、失敗: {failures or 'なし'})")
+
+    if not payloads:
+        raise SystemExit("すべての銘柄で戦略生成に失敗したため、ワークフローを失敗扱いにします。")
 
 
 if __name__ == "__main__":
