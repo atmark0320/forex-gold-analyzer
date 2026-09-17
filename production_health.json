@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-09-17T01:34:04.414684+00:00",
+  "generated_at_utc": "2026-09-17T04:46:19.778774+00:00",
   "policy": {
     "automatic_profile_switch": false,
     "window_days": 180,
@@ -34,18 +34,18 @@
         "start": "2025-09-21T23:00:00+00:00",
         "end": "2026-03-20T23:00:00+00:00",
         "trades": 46,
-        "wins": 22,
-        "losses": 24,
-        "win_rate_pct": 47.83,
-        "total_r": 9.0,
-        "expectancy_r": 0.1957,
-        "profit_factor": 1.375,
+        "wins": 21,
+        "losses": 25,
+        "win_rate_pct": 45.65,
+        "total_r": 6.5,
+        "expectancy_r": 0.1413,
+        "profit_factor": 1.26,
         "max_drawdown_r": 4.0,
         "max_consecutive_losses": 4
       },
       "reasons": [
         "直近: Expectancy=-0.185R, PF=0.726",
-        "前期間: Expectancy=0.196R, PF=1.375"
+        "前期間: Expectancy=0.141R, PF=1.260"
       ]
     },
     {
