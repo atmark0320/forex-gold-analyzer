@@ -16,7 +16,7 @@ SYMBOLS = {
     "GBPUSD": "gbpusd", "AUDUSD": "audusd", "USDCAD": "usdcad", "USDCHF": "usdchf",
 }
 YFINANCE_SYMBOLS = {
-    "USDJPY": "JPY=X", "XAUUSD": "XAUUSD=X", "EURUSD": "EURUSD=X",
+    "USDJPY": "JPY=X", "XAUUSD": "GC=F", "EURUSD": "EURUSD=X",
     "GBPUSD": "GBPUSD=X", "AUDUSD": "AUDUSD=X", "USDCAD": "CAD=X", "USDCHF": "CHF=X",
 }
 # Shorter chunks are more resilient when Dukascopy has a bad/empty artifact in
