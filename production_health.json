@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-09-17T13:25:05.543893+00:00",
+  "generated_at_utc": "2026-09-17T19:44:19.845872+00:00",
   "policy": {
     "automatic_profile_switch": false,
     "window_days": 180,
@@ -14,7 +14,7 @@
   "symbols": [
     {
       "symbol": "USDJPY",
-      "profile": "baseline",
+      "profile": "wider_stop",
       "adx_gate": null,
       "status": "degraded",
       "recent": {
@@ -33,55 +33,55 @@
       "previous": {
         "start": "2025-09-21T23:00:00+00:00",
         "end": "2026-03-20T23:00:00+00:00",
-        "trades": 43,
-        "wins": 18,
-        "losses": 25,
-        "win_rate_pct": 41.86,
-        "total_r": 2.0,
-        "expectancy_r": 0.0465,
-        "profit_factor": 1.08,
-        "max_drawdown_r": 7.0,
-        "max_consecutive_losses": 5
-      },
-      "reasons": [
-        "直近: Expectancy=-0.202R, PF=0.703",
-        "前期間: Expectancy=0.046R, PF=1.080"
-      ]
-    },
-    {
-      "symbol": "XAUUSD",
-      "profile": "adx25_faster_target",
-      "adx_gate": 25.0,
-      "status": "degraded",
-      "recent": {
-        "start": "2026-03-20T23:00:00+00:00",
-        "end": "2026-09-16T23:00:00+00:00",
-        "trades": 33,
-        "wins": 12,
-        "losses": 21,
-        "win_rate_pct": 36.36,
-        "total_r": -6.0,
-        "expectancy_r": -0.1818,
-        "profit_factor": 0.714,
-        "max_drawdown_r": 9.5,
-        "max_consecutive_losses": 7
-      },
-      "previous": {
-        "start": "2025-09-21T23:00:00+00:00",
-        "end": "2026-03-20T23:00:00+00:00",
-        "trades": 36,
+        "trades": 42,
         "wins": 20,
-        "losses": 16,
-        "win_rate_pct": 55.56,
-        "total_r": 9.0,
-        "expectancy_r": 0.25,
-        "profit_factor": 1.563,
+        "losses": 22,
+        "win_rate_pct": 47.62,
+        "total_r": 8.0,
+        "expectancy_r": 0.1905,
+        "profit_factor": 1.364,
         "max_drawdown_r": 5.0,
         "max_consecutive_losses": 5
       },
       "reasons": [
-        "直近: Expectancy=-0.182R, PF=0.714",
-        "前期間: Expectancy=0.250R, PF=1.563"
+        "直近: Expectancy=-0.202R, PF=0.703",
+        "前期間: Expectancy=0.191R, PF=1.364"
+      ]
+    },
+    {
+      "symbol": "XAUUSD",
+      "profile": "wider_target",
+      "adx_gate": null,
+      "status": "degraded",
+      "recent": {
+        "start": "2026-03-20T23:00:00+00:00",
+        "end": "2026-09-16T23:00:00+00:00",
+        "trades": 43,
+        "wins": 12,
+        "losses": 31,
+        "win_rate_pct": 27.91,
+        "total_r": -9.4,
+        "expectancy_r": -0.2186,
+        "profit_factor": 0.697,
+        "max_drawdown_r": 14.6,
+        "max_consecutive_losses": 11
+      },
+      "previous": {
+        "start": "2025-09-21T23:00:00+00:00",
+        "end": "2026-03-20T23:00:00+00:00",
+        "trades": 49,
+        "wins": 22,
+        "losses": 27,
+        "win_rate_pct": 44.9,
+        "total_r": 12.6,
+        "expectancy_r": 0.2571,
+        "profit_factor": 1.467,
+        "max_drawdown_r": 8.0,
+        "max_consecutive_losses": 8
+      },
+      "reasons": [
+        "直近: Expectancy=-0.219R, PF=0.697",
+        "前期間: Expectancy=0.257R, PF=1.467"
       ]
     }
   ]
