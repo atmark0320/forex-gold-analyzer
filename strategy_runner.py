@@ -9,7 +9,7 @@ import pandas as pd
 
 from market_data_provider import build_timeframes, fetch_ohlc
 from strategy_profiles import production_adx_gate, production_config, production_profile
-from technical_engine import generate_trade_plan, timeframe_snapshot
+from technical_engine import add_indicators, generate_trade_plan, timeframe_snapshot
 
 SYMBOLS = ("USDJPY", "XAUUSD")
 NOTIFY_PAYLOAD_FILE = Path("notify_payloads.json")
@@ -79,13 +79,15 @@ def build_production_plan(symbol: str, h1: pd.DataFrame):
         raise RuntimeError("insufficient completed timeframe data")
     cfg = production_config(symbol)
     plan = generate_trade_plan(daily, h4, h1, cfg)
+    # The profile gate must inspect the same calculated indicator series used by the strategy.
+    h4_with_indicators = add_indicators(h4, cfg)
     # レポート表示用: 判定に実際使われた値そのもの(生のOHLCではなく計算済みスナップショット)を保持する
     snapshots = {
         "D1": timeframe_snapshot(daily, cfg),
         "H4": timeframe_snapshot(h4, cfg),
         "H1": timeframe_snapshot(h1, cfg),
     }
-    return _apply_profile_gate(symbol, plan, h4), snapshots
+    return _apply_profile_gate(symbol, plan, h4_with_indicators), snapshots
 
 
 def build_report(symbol: str, mtf: dict[str, dict], plan) -> str:

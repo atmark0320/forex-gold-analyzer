@@ -1,5 +1,9 @@
-import os
+from __future__ import annotations
+
 import json
+import os
+import time
+
 import requests
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -7,6 +11,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")  # GitHub Actionsが自動設定する "owner/repo"
 NOTIFY_PAYLOAD_FILE = "notify_payloads.json"
 PRODUCTION_HEALTH_FILE = "production_health.json"
+TELEGRAM_MAX_ATTEMPTS = 3
 
 
 def public_raw_url(relative_path: str) -> str:
@@ -14,15 +19,31 @@ def public_raw_url(relative_path: str) -> str:
     return f"https://raw.githubusercontent.com/{GITHUB_REPOSITORY}/{branch}/{relative_path}"
 
 
+def _post_telegram(method: str, **kwargs):
+    """Send a Telegram request without making a transient network error fail CI."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+    for attempt in range(1, TELEGRAM_MAX_ATTEMPTS + 1):
+        try:
+            return requests.post(url, **kwargs)
+        except requests.RequestException as exc:
+            if attempt == TELEGRAM_MAX_ATTEMPTS:
+                print(f"Telegram {method} 接続失敗（通知をスキップ）: {exc}")
+                return None
+            delay = 2 ** (attempt - 1)
+            print(f"Telegram {method} 接続失敗。{delay}秒後に再試行します: {exc}")
+            time.sleep(delay)
+    return None
+
+
 def send_photo(image_url: str, caption: str = "") -> None:
-    resp = requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+    resp = _post_telegram(
+        "sendPhoto",
         data={"chat_id": TELEGRAM_CHAT_ID, "photo": image_url, "caption": caption[:1024]},
         timeout=20,
     )
-    if resp.status_code == 200:
+    if resp is not None and resp.status_code == 200:
         print("Telegramへ画像を送信しました")
-    else:
+    elif resp is not None:
         print(f"Telegram画像送信失敗: HTTP {resp.status_code} {resp.text}")
 
 
@@ -30,14 +51,14 @@ def send_text(text: str) -> None:
     # Telegramの1通あたり上限は4096文字。安全のため4000で区切って分割送信する。
     for i in range(0, len(text), 4000):
         chunk = text[i:i + 4000]
-        resp = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        resp = _post_telegram(
+            "sendMessage",
             data={"chat_id": TELEGRAM_CHAT_ID, "text": chunk},
             timeout=15,
         )
-        if resp.status_code == 200:
+        if resp is not None and resp.status_code == 200:
             print("Telegramへテキストを送信しました")
-        else:
+        elif resp is not None:
             print(f"Telegramテキスト送信失敗: HTTP {resp.status_code} {resp.text}")
 
 
