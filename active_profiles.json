@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "USDJPY": "wider_stop",
+    "XAUUSD": "wider_target"
+  },
+  "history": [
+    {
+      "symbol": "XAUUSD",
+      "from": "baseline",
+      "to": "wider_target",
+      "reason": "総合成績 39.4R / median 6.2R / positive_windows 6/7"
+    }
+  ]
+}
