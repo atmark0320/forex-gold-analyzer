@@ -27,10 +27,29 @@ def _fmt(value: float | None, digits: int = 5) -> str:
     return f"{float(value):.{digits}f}"
 
 
+def _get_adx(h4: pd.DataFrame) -> float:
+    """Read the canonical ADX column with an explicit validation error."""
+    if "adx" not in h4.columns:
+        raise RuntimeError(
+            f"ADX column missing from completed H4 timeframe: {list(h4.columns)}"
+        )
+    if h4.empty:
+        raise RuntimeError("completed H4 timeframe is empty")
+    value = h4["adx"].iloc[-1]
+    if pd.isna(value):
+        raise RuntimeError("latest completed H4 ADX is NaN")
+    return float(value)
+
+
 def _apply_profile_gate(symbol: str, plan, h4: pd.DataFrame):
     gate = production_adx_gate(symbol)
-    if gate is None or float(h4["adx"].iloc[-1]) >= gate:
+    if gate is None:
         return plan
+
+    adx = _get_adx(h4)
+    if adx >= gate:
+        return plan
+
     return replace(
         plan,
         direction="wait",
@@ -43,7 +62,10 @@ def _apply_profile_gate(symbol: str, plan, h4: pd.DataFrame):
         risk_per_unit=None,
         reward_r1=None,
         reward_r2=None,
-        reasons=tuple(list(plan.reasons) + [f"4H ADX {float(h4['adx'].iloc[-1]):.2f} < {gate:.0f} のため見送り"]),
+        reasons=tuple(
+            list(plan.reasons)
+            + [f"4H ADX {adx:.2f} < {gate:.0f} のため見送り"]
+        ),
         invalidation=f"4H ADXが{gate:.0f}以上になるまで見送り",
     )
 
