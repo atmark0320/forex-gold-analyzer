@@ -1,0 +1,88 @@
+{
+  "generated_at_utc": "2026-09-17T00:33:33.724387+00:00",
+  "policy": {
+    "automatic_profile_switch": false,
+    "window_days": 180,
+    "minimum_trades": 20,
+    "degraded_rule": "recent expectancy < 0 AND profit factor < 0.90; previous window is used for context"
+  },
+  "overall_status": "degraded",
+  "alerts": [
+    "USDJPY: 本番プロファイル劣化を検知。再検証が必要",
+    "XAUUSD: 本番プロファイル劣化を検知。再検証が必要"
+  ],
+  "symbols": [
+    {
+      "symbol": "USDJPY",
+      "profile": "baseline",
+      "adx_gate": null,
+      "status": "degraded",
+      "recent": {
+        "start": "2026-03-20T23:00:00+00:00",
+        "end": "2026-09-16T23:00:00+00:00",
+        "trades": 46,
+        "wins": 15,
+        "losses": 31,
+        "win_rate_pct": 32.61,
+        "total_r": -8.5,
+        "expectancy_r": -0.1848,
+        "profit_factor": 0.726,
+        "max_drawdown_r": 10.5,
+        "max_consecutive_losses": 6
+      },
+      "previous": {
+        "start": "2025-09-21T23:00:00+00:00",
+        "end": "2026-03-20T23:00:00+00:00",
+        "trades": 46,
+        "wins": 22,
+        "losses": 24,
+        "win_rate_pct": 47.83,
+        "total_r": 9.0,
+        "expectancy_r": 0.1957,
+        "profit_factor": 1.375,
+        "max_drawdown_r": 4.0,
+        "max_consecutive_losses": 4
+      },
+      "reasons": [
+        "直近: Expectancy=-0.185R, PF=0.726",
+        "前期間: Expectancy=0.196R, PF=1.375"
+      ]
+    },
+    {
+      "symbol": "XAUUSD",
+      "profile": "adx25_faster_target",
+      "adx_gate": 25.0,
+      "status": "degraded",
+      "recent": {
+        "start": "2026-03-20T23:00:00+00:00",
+        "end": "2026-09-16T23:00:00+00:00",
+        "trades": 32,
+        "wins": 13,
+        "losses": 19,
+        "win_rate_pct": 40.62,
+        "total_r": -2.75,
+        "expectancy_r": -0.0859,
+        "profit_factor": 0.855,
+        "max_drawdown_r": 7.75,
+        "max_consecutive_losses": 7
+      },
+      "previous": {
+        "start": "2025-09-21T23:00:00+00:00",
+        "end": "2026-03-20T23:00:00+00:00",
+        "trades": 35,
+        "wins": 20,
+        "losses": 15,
+        "win_rate_pct": 57.14,
+        "total_r": 10.0,
+        "expectancy_r": 0.2857,
+        "profit_factor": 1.667,
+        "max_drawdown_r": 5.0,
+        "max_consecutive_losses": 5
+      },
+      "reasons": [
+        "直近: Expectancy=-0.086R, PF=0.855",
+        "前期間: Expectancy=0.286R, PF=1.667"
+      ]
+    }
+  ]
+}
