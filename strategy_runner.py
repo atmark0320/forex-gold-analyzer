@@ -9,7 +9,7 @@ import pandas as pd
 
 from market_data_provider import build_timeframes, fetch_ohlc
 from strategy_profiles import production_adx_gate, production_config, production_profile
-from technical_engine import generate_trade_plan
+from technical_engine import generate_trade_plan, timeframe_snapshot
 
 SYMBOLS = ("USDJPY", "XAUUSD")
 NOTIFY_PAYLOAD_FILE = Path("notify_payloads.json")
@@ -79,17 +79,19 @@ def build_production_plan(symbol: str, h1: pd.DataFrame):
         raise RuntimeError("insufficient completed timeframe data")
     cfg = production_config(symbol)
     plan = generate_trade_plan(daily, h4, h1, cfg)
-    return _apply_profile_gate(symbol, plan, h4), {
-        "D1": daily,
-        "H4": h4,
-        "H1": h1,
+    # レポート表示用: 判定に実際使われた値そのもの(生のOHLCではなく計算済みスナップショット)を保持する
+    snapshots = {
+        "D1": timeframe_snapshot(daily, cfg),
+        "H4": timeframe_snapshot(h4, cfg),
+        "H1": timeframe_snapshot(h1, cfg),
     }
+    return _apply_profile_gate(symbol, plan, h4), snapshots
 
 
-def build_report(symbol: str, mtf: dict[str, pd.DataFrame], plan) -> str:
-    d1 = mtf["D1"].iloc[-1]
-    h4 = mtf["H4"].iloc[-1]
-    h1 = mtf["H1"].iloc[-1]
+def build_report(symbol: str, mtf: dict[str, dict], plan) -> str:
+    d1 = mtf["D1"]
+    h4 = mtf["H4"]
+    h1 = mtf["H1"]
     market_name = "XAU/USD spot" if symbol == "XAUUSD" else "USD/JPY spot"
     lines = [
         f"## {symbol} / {market_name}",
@@ -117,7 +119,7 @@ def build_report(symbol: str, mtf: dict[str, pd.DataFrame], plan) -> str:
         "### Indicators",
         f"4H ADX: {_fmt(h4.get('adx'), 2)}",
         f"1H RSI: {_fmt(h1.get('rsi'), 2)}",
-        f"1H MACD: {_fmt(h1.get('macd'), 5)}",
+        f"1H MACD: {_fmt(h1.get('macd_hist'), 5)}",
         "",
         "### Reasons",
     ]
