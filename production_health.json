@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-09-19T12:37:05.391143+00:00",
+  "generated_at_utc": "2026-09-19T18:36:21.808552+00:00",
   "policy": {
     "automatic_profile_switch": false,
     "window_days": 180,
@@ -33,19 +33,19 @@
       "previous": {
         "start": "2025-09-23T20:00:00+00:00",
         "end": "2026-03-22T20:00:00+00:00",
-        "trades": 44,
+        "trades": 43,
         "wins": 21,
-        "losses": 23,
-        "win_rate_pct": 47.73,
-        "total_r": 8.5,
-        "expectancy_r": 0.1932,
-        "profit_factor": 1.37,
+        "losses": 22,
+        "win_rate_pct": 48.84,
+        "total_r": 9.5,
+        "expectancy_r": 0.2209,
+        "profit_factor": 1.432,
         "max_drawdown_r": 5.0,
         "max_consecutive_losses": 5
       },
       "reasons": [
         "直近: Expectancy=-0.148R, PF=0.776",
-        "前期間: Expectancy=0.193R, PF=1.370"
+        "前期間: Expectancy=0.221R, PF=1.432"
       ]
     },
     {
@@ -56,32 +56,32 @@
       "recent": {
         "start": "2026-03-22T20:00:00+00:00",
         "end": "2026-09-18T20:00:00+00:00",
-        "trades": 47,
-        "wins": 13,
-        "losses": 34,
-        "win_rate_pct": 27.66,
-        "total_r": -10.6,
-        "expectancy_r": -0.2255,
-        "profit_factor": 0.688,
-        "max_drawdown_r": 14.6,
-        "max_consecutive_losses": 8
+        "trades": 43,
+        "wins": 11,
+        "losses": 32,
+        "win_rate_pct": 25.58,
+        "total_r": -12.2,
+        "expectancy_r": -0.2837,
+        "profit_factor": 0.619,
+        "max_drawdown_r": 16.2,
+        "max_consecutive_losses": 12
       },
       "previous": {
         "start": "2025-09-23T20:00:00+00:00",
         "end": "2026-03-22T20:00:00+00:00",
-        "trades": 47,
+        "trades": 48,
         "wins": 20,
-        "losses": 27,
-        "win_rate_pct": 42.55,
-        "total_r": 9.0,
-        "expectancy_r": 0.1915,
-        "profit_factor": 1.333,
+        "losses": 28,
+        "win_rate_pct": 41.67,
+        "total_r": 8.0,
+        "expectancy_r": 0.1667,
+        "profit_factor": 1.286,
         "max_drawdown_r": 7.2,
         "max_consecutive_losses": 7
       },
       "reasons": [
-        "直近: Expectancy=-0.226R, PF=0.688",
-        "前期間: Expectancy=0.192R, PF=1.333"
+        "直近: Expectancy=-0.284R, PF=0.619",
+        "前期間: Expectancy=0.167R, PF=1.286"
       ]
     }
   ]
