@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-09-18T12:58:30.488307+00:00",
+  "generated_at_utc": "2026-09-19T04:30:16.985046+00:00",
   "policy": {
     "automatic_profile_switch": false,
     "window_days": 180,
@@ -18,34 +18,34 @@
       "adx_gate": null,
       "status": "degraded",
       "recent": {
-        "start": "2026-03-21T23:00:00+00:00",
-        "end": "2026-09-17T23:00:00+00:00",
+        "start": "2026-03-22T20:00:00+00:00",
+        "end": "2026-09-18T20:00:00+00:00",
         "trades": 46,
-        "wins": 13,
-        "losses": 33,
-        "win_rate_pct": 28.26,
-        "total_r": -13.5,
-        "expectancy_r": -0.2935,
-        "profit_factor": 0.591,
-        "max_drawdown_r": 15.5,
+        "wins": 15,
+        "losses": 31,
+        "win_rate_pct": 32.61,
+        "total_r": -8.5,
+        "expectancy_r": -0.1848,
+        "profit_factor": 0.726,
+        "max_drawdown_r": 10.5,
         "max_consecutive_losses": 6
       },
       "previous": {
-        "start": "2025-09-22T23:00:00+00:00",
-        "end": "2026-03-21T23:00:00+00:00",
-        "trades": 42,
-        "wins": 20,
+        "start": "2025-09-23T20:00:00+00:00",
+        "end": "2026-03-22T20:00:00+00:00",
+        "trades": 44,
+        "wins": 22,
         "losses": 22,
-        "win_rate_pct": 47.62,
-        "total_r": 8.0,
-        "expectancy_r": 0.1905,
-        "profit_factor": 1.364,
-        "max_drawdown_r": 7.0,
-        "max_consecutive_losses": 5
+        "win_rate_pct": 50.0,
+        "total_r": 11.0,
+        "expectancy_r": 0.25,
+        "profit_factor": 1.5,
+        "max_drawdown_r": 4.0,
+        "max_consecutive_losses": 4
       },
       "reasons": [
-        "直近: Expectancy=-0.293R, PF=0.591",
-        "前期間: Expectancy=0.191R, PF=1.364"
+        "直近: Expectancy=-0.185R, PF=0.726",
+        "前期間: Expectancy=0.250R, PF=1.500"
       ]
     },
     {
@@ -54,34 +54,34 @@
       "adx_gate": null,
       "status": "degraded",
       "recent": {
-        "start": "2026-03-22T12:00:00+00:00",
-        "end": "2026-09-18T12:00:00+00:00",
-        "trades": 45,
-        "wins": 11,
-        "losses": 34,
-        "win_rate_pct": 24.44,
-        "total_r": -14.2,
-        "expectancy_r": -0.3156,
-        "profit_factor": 0.582,
-        "max_drawdown_r": 19.4,
+        "start": "2026-03-22T20:00:00+00:00",
+        "end": "2026-09-18T20:00:00+00:00",
+        "trades": 42,
+        "wins": 9,
+        "losses": 33,
+        "win_rate_pct": 21.43,
+        "total_r": -16.8,
+        "expectancy_r": -0.4,
+        "profit_factor": 0.491,
+        "max_drawdown_r": 19.2,
         "max_consecutive_losses": 13
       },
       "previous": {
-        "start": "2025-09-23T12:00:00+00:00",
-        "end": "2026-03-22T12:00:00+00:00",
-        "trades": 48,
-        "wins": 21,
+        "start": "2025-09-23T20:00:00+00:00",
+        "end": "2026-03-22T20:00:00+00:00",
+        "trades": 46,
+        "wins": 19,
         "losses": 27,
-        "win_rate_pct": 43.75,
-        "total_r": 10.8,
-        "expectancy_r": 0.225,
-        "profit_factor": 1.4,
-        "max_drawdown_r": 6.2,
+        "win_rate_pct": 41.3,
+        "total_r": 7.2,
+        "expectancy_r": 0.1565,
+        "profit_factor": 1.267,
+        "max_drawdown_r": 6.4,
         "max_consecutive_losses": 6
       },
       "reasons": [
-        "直近: Expectancy=-0.316R, PF=0.582",
-        "前期間: Expectancy=0.225R, PF=1.400"
+        "直近: Expectancy=-0.400R, PF=0.491",
+        "前期間: Expectancy=0.157R, PF=1.267"
       ]
     }
   ]
